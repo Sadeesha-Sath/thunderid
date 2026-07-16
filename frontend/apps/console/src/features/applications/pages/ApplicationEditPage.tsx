@@ -33,6 +33,7 @@ import {
   PageTitle,
 } from '@wso2/oxygen-ui';
 import {ArrowLeft, Edit} from '@wso2/oxygen-ui-icons-react';
+import isEqual from 'lodash-es/isEqual';
 import {useState, useCallback, useMemo, type SyntheticEvent} from 'react';
 import {useTranslation} from 'react-i18next';
 import {Link, useNavigate, useParams} from 'react-router';
@@ -80,6 +81,14 @@ function TabPanel({children = null, value, index, ...other}: TabPanelProps) {
       {value === index && <Box sx={{py: 3}}>{children}</Box>}
     </div>
   );
+}
+
+// Treats empty-string/empty-array/undefined/null as equivalent, so retyping a field back to blank
+// counts as "no change" even when the saved value was simply absent rather than an empty string.
+function normalizeForCompare(value: unknown): unknown {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (Array.isArray(value) && value.length === 0) return undefined;
+  return value;
 }
 
 export default function ApplicationEditPage() {
@@ -163,12 +172,21 @@ export default function ApplicationEditPage() {
       });
       setEditedApp({});
       await refetch();
+      // Bumped only after refetch resolves to prevent stale data being passed to the remounted sections.
+      setSectionResetKey((key) => key + 1);
     } catch {
       logger.error('Failed to update application');
     }
   }, [application, applicationId, editedApp, updateApplication, refetch, logger]);
 
-  const hasChanges = useMemo(() => Object.keys(editedApp).length > 0, [editedApp]);
+  const hasChanges = useMemo(
+    () =>
+      Object.entries(editedApp).some(
+        ([key, value]) =>
+          !isEqual(normalizeForCompare(value), normalizeForCompare(application?.[key as keyof Application])),
+      ),
+    [editedApp, application],
+  );
 
   if (isLoading) {
     return <PageLoadingAnimation />;

@@ -793,6 +793,72 @@ describe('ApplicationEditPage', () => {
       });
     });
 
+    it('should hide the action bar when a field is manually retyped back to its original value', async () => {
+      const user = userEvent.setup();
+      renderComponent();
+
+      const nameSection = screen.getByText('Test Application').closest('div');
+      const editButton = nameSection?.querySelector('button');
+      await user.click(editButton!);
+
+      const nameInput = screen.getByRole('textbox');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Updated Application{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+      });
+
+      // Retype the exact original value
+      const updatedNameSection = screen.getByText('Updated Application').closest('div');
+      const editButtonAgain = updatedNameSection?.querySelector('button');
+      await user.click(editButtonAgain!);
+
+      const nameInputAgain = screen.getByRole('textbox');
+      await user.clear(nameInputAgain);
+      await user.type(nameInputAgain, 'Test Application{Enter}');
+
+      await waitFor(() => {
+        expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
+      });
+    });
+
+    it('should keep the action bar visible if only one of two edited fields is reverted', async () => {
+      const user = userEvent.setup();
+      renderComponent();
+
+      // Edit name
+      const nameSection = screen.getByText('Test Application').closest('div');
+      const editNameButton = nameSection?.querySelector('button');
+      await user.click(editNameButton!);
+      const nameInput = screen.getByRole('textbox');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Updated Application{Enter}');
+
+      // Edit description
+      const descriptionSection = screen.getByText('Test application description').closest('div');
+      const editDescriptionButton = descriptionSection?.querySelector('button');
+      await user.click(editDescriptionButton!);
+      const descriptionInput = screen.getByRole('textbox');
+      await user.clear(descriptionInput);
+      await user.type(descriptionInput, 'Updated description{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+      });
+
+      // Revert only the name
+      const updatedNameSection = screen.getByText('Updated Application').closest('div');
+      const editNameAgain = updatedNameSection?.querySelector('button');
+      await user.click(editNameAgain!);
+      const nameInputAgain = screen.getByRole('textbox');
+      await user.clear(nameInputAgain);
+      await user.type(nameInputAgain, 'Test Application{Enter}');
+
+      // Description is still changed, so the bar must stay visible
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+    });
+
     it('should reset changes when reset button is clicked', async () => {
       const user = userEvent.setup();
       renderComponent();
@@ -956,6 +1022,49 @@ describe('ApplicationEditPage', () => {
         expect(callArgs).toHaveProperty('applicationId', 'test-app-id');
         expect(callArgs).toHaveProperty('data');
         expect(callArgs.data).toHaveProperty('name', 'Updated Application');
+      });
+    });
+
+    it('should bump sectionResetKey passed to EditGeneralSettings when save succeeds', async () => {
+      const user = userEvent.setup();
+      mockUseUpdateApplication.mockReturnValue({
+        mutate: mockUpdateApplicationMutate,
+        mutateAsync: vi.fn().mockResolvedValue(mockApplication),
+        isPending: false,
+        isError: false,
+        error: null,
+      } as unknown as UseMutationResult<Application, Error, Partial<Application>>);
+
+      // The bump only fires after refetch() resolves
+      mockUseGetApplication.mockReturnValue({
+        data: mockApplication,
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn().mockResolvedValue({data: mockApplication}),
+      } as unknown as UseQueryResult<Application>);
+
+      renderComponent();
+
+      const initialKey = vi.mocked(EditGeneralSettings).mock.calls.at(-1)?.[0].sectionResetKey;
+
+      const nameSection = screen.getByText('Test Application').closest('div');
+      const editButton = nameSection?.querySelector('button');
+      await user.click(editButton!);
+
+      const nameInput = screen.getByRole('textbox');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Updated Application{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', {name: /save changes/i})).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', {name: /save changes/i}));
+
+      await waitFor(() => {
+        const keyAfterSave = vi.mocked(EditGeneralSettings).mock.calls.at(-1)?.[0].sectionResetKey;
+        expect(keyAfterSave).toBe((initialKey ?? 0) + 1);
       });
     });
 
