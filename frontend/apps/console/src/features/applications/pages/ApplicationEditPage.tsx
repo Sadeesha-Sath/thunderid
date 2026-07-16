@@ -93,6 +93,10 @@ export default function ApplicationEditPage() {
 
   const [activeTab, setActiveTab] = useState(0);
   const [editedApp, setEditedApp] = useState<Partial<Application>>({});
+  // Bumped on Save/Reset to force AccessSection/McpAccessSection/UrlsSection to remount with a
+  // clean form — they keep local state (redirect URI list, react-hook-form defaults) that a
+  // `setEditedApp({})` alone wouldn't reset.
+  const [sectionResetKey, setSectionResetKey] = useState(0);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -229,6 +233,7 @@ export default function ApplicationEditPage() {
                   handleBack().catch(() => null);
                 }}
                 onValidationChange={setMcpAccessInvalid}
+                sectionResetKey={sectionResetKey}
               />
             ),
           },
@@ -248,6 +253,7 @@ export default function ApplicationEditPage() {
                 application={application}
                 editedApp={editedApp}
                 onFieldChange={handleFieldChange}
+                sectionResetKey={sectionResetKey}
               />
             ),
             hidden: isMcpM2mOnly,
@@ -257,6 +263,7 @@ export default function ApplicationEditPage() {
             label: t('applications:edit.page.tabs.token'),
             panel: (
               <EditTokenSettings
+                sectionResetKey={sectionResetKey}
                 application={application}
                 oauth2Config={oauth2Config}
                 onFieldChange={handleFieldChange}
@@ -525,6 +532,7 @@ export default function ApplicationEditPage() {
                 onDeleteSuccess={() => {
                   handleBack().catch(() => null);
                 }}
+                sectionResetKey={sectionResetKey}
               />
             </TabPanel>
 
@@ -539,12 +547,14 @@ export default function ApplicationEditPage() {
                 application={application}
                 editedApp={editedApp}
                 onFieldChange={handleFieldChange}
+                sectionResetKey={sectionResetKey}
               />
             </TabPanel>
 
             {/* Token Tab */}
             <TabPanel value={activeTab} index={hasIntegrationGuides ? 4 : 3}>
               <EditTokenSettings
+                sectionResetKey={sectionResetKey}
                 application={application}
                 oauth2Config={oauth2Config}
                 onFieldChange={handleFieldChange}
@@ -579,7 +589,10 @@ export default function ApplicationEditPage() {
           saveDisabled={
             hasValidationErrors || mcpAccessInvalid || advancedSettingsInvalid || application.isReadOnly === true
           }
-          onReset={() => setEditedApp({})}
+          onReset={() => {
+            setEditedApp({});
+            setSectionResetKey((key) => key + 1);
+          }}
           onSave={() => {
             handleSave().catch(() => null);
           }}

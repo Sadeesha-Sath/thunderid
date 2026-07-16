@@ -41,6 +41,11 @@ interface EditCustomizationSettingsProps {
    */
   onFieldChange: (field: keyof Application, value: unknown) => void;
   /**
+   * Bumped by the parent on Save/Reset to force UrlsSection to remount and drop its stale
+   * react-hook-form defaults.
+   */
+  sectionResetKey?: number;
+  /**
    * Singular noun used to refer to the entity in user-visible copy (default: 'application').
    */
   entityLabel?: string;
@@ -61,6 +66,7 @@ export default function EditCustomizationSettings({
   application,
   editedApp,
   onFieldChange,
+  sectionResetKey = 0,
   entityLabel = 'application',
 }: EditCustomizationSettingsProps) {
   return (
@@ -72,6 +78,7 @@ export default function EditCustomizationSettings({
         entityLabel={entityLabel}
       />
       <UrlsSection
+        key={sectionResetKey}
         application={application}
         editedApp={editedApp}
         onFieldChange={onFieldChange}
