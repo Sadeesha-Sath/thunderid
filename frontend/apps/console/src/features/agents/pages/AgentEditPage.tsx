@@ -18,6 +18,7 @@
 
 import {PageLoadingAnimation, UnsavedChangesBar} from '@thunderid/components';
 import {useLogger} from '@thunderid/logger/react';
+import {isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
   Alert,
   Box,
@@ -77,9 +78,7 @@ export default function AgentEditPage(): JSX.Element {
 
   const [activeTab, setActiveTab] = useState(0);
   const [editedAgent, setEditedAgent] = useState<Partial<Agent>>({});
-  // Bumped on Save/Reset to force EditAgentAttributes to remount with a clean form — it keeps
-  // its own react-hook-form state locally, which a `setEditedAgent({})` alone wouldn't reset.
-  const [attributesResetKey, setAttributesResetKey] = useState(0);
+  const [sectionResetKey, setSectionResetKey] = useState(0);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -132,14 +131,17 @@ export default function AgentEditPage(): JSX.Element {
     try {
       await updateAgent.mutateAsync({agentId, data: updatedData});
       setEditedAgent({});
-      setAttributesResetKey((key) => key + 1);
       await refetch();
+      setSectionResetKey((key) => key + 1);
     } catch {
       logger.error('Failed to update agent');
     }
   }, [agent, agentId, editedAgent, updateAgent, refetch, logger]);
 
-  const hasChanges = useMemo(() => Object.keys(editedAgent).length > 0, [editedAgent]);
+  const hasChanges = useMemo(
+    () => Object.entries(editedAgent).some(([key, value]) => !isEqualIgnoringEmpty(value, agent?.[key as keyof Agent])),
+    [editedAgent, agent],
+  );
 
   if (isLoading) {
     return <PageLoadingAnimation />;
@@ -254,7 +256,7 @@ export default function AgentEditPage(): JSX.Element {
       label: t('agents:edit.page.tabs.attributes', 'Attributes'),
       render: () => (
         <EditAgentAttributes
-          key={attributesResetKey}
+          key={sectionResetKey}
           agent={agent}
           editedAgent={editedAgent}
           onFieldChange={handleFieldChange}
@@ -310,6 +312,7 @@ export default function AgentEditPage(): JSX.Element {
           oauth2Config={oauth2Config}
           onFieldChange={handleFieldChange}
           onValidationChange={handleValidationChange('token')}
+          sectionResetKey={sectionResetKey}
         />
       ),
     });
@@ -473,7 +476,7 @@ export default function AgentEditPage(): JSX.Element {
           saveDisabled={hasAnyValidationError || agent.isReadOnly === true}
           onReset={() => {
             setEditedAgent({});
-            setAttributesResetKey((key) => key + 1);
+            setSectionResetKey((key) => key + 1);
           }}
           onSave={() => {
             void handleSave();

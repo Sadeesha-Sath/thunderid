@@ -18,6 +18,7 @@
 
 import {PageLoadingAnimation, ResourceAvatar, UnsavedChangesBar} from '@thunderid/components';
 import {useLogger} from '@thunderid/logger/react';
+import {isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
   Box,
   Stack,
@@ -139,7 +140,13 @@ export default function OrganizationUnitEditPage(): JSX.Element {
     }
   }, [organizationUnit, id, editedOU, updateOrganizationUnit, resetTreeState, refetch, logger]);
 
-  const hasChanges = useMemo(() => Object.keys(editedOU).length > 0, [editedOU]);
+  const hasChanges = useMemo(
+    () =>
+      Object.entries(editedOU).some(
+        ([key, value]) => !isEqualIgnoringEmpty(value, organizationUnit?.[key as keyof OrganizationUnit]),
+      ),
+    [editedOU, organizationUnit],
+  );
 
   const handleDeleteSuccess = (): void => {
     resetTreeState();
@@ -276,18 +283,12 @@ export default function OrganizationUnitEditPage(): JSX.Element {
                 value={tempDescription}
                 onChange={(e) => setTempDescription(e.target.value)}
                 onBlur={() => {
-                  const trimmedDescription = tempDescription.trim();
-                  if (trimmedDescription !== (organizationUnit.description ?? '')) {
-                    handleFieldChange('description', trimmedDescription || null);
-                  }
+                  handleFieldChange('description', tempDescription.trim() || null);
                   setIsEditingDescription(false);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && e.ctrlKey) {
-                    const trimmedDescription = tempDescription.trim();
-                    if (trimmedDescription !== (organizationUnit.description ?? '')) {
-                      handleFieldChange('description', trimmedDescription || null);
-                    }
+                    handleFieldChange('description', tempDescription.trim() || null);
                     setIsEditingDescription(false);
                   } else if (e.key === 'Escape') {
                     setTempDescription(

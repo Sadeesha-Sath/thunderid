@@ -29,6 +29,7 @@ export {default as isRelativeUrl} from './path/isRelativeUrl';
 
 // Object Operations
 export {default as isEmpty} from './object/isEmpty';
+export {default as isEqualIgnoringEmpty} from './object/isEqualIgnoringEmpty';
 export {default as merge} from './object/merge';
 
 // Error Utilities

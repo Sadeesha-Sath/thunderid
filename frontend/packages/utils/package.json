@@ -52,13 +52,15 @@
     "typecheck": "tsc -p tsconfig.lib.json"
   },
   "dependencies": {
-    "human-id": "4.1.2"
+    "human-id": "4.1.2",
+    "lodash-es": "catalog:"
   },
   "devDependencies": {
     "@thunderid/types": "workspace:^",
     "@thunderid/eslint-plugin": "workspace:^",
     "@thunderid/prettier-config": "workspace:^",
     "@thunderid/test-utils": "workspace:^",
+    "@types/lodash-es": "catalog:",
     "@types/node": "catalog:",
     "eslint": "catalog:",
     "prettier": "catalog:",

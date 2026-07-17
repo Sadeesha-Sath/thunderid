@@ -1114,6 +1114,9 @@ importers:
       '@thunderid/types':
         specifier: workspace:^
         version: link:../types
+      '@thunderid/utils':
+        specifier: workspace:^
+        version: link:../utils
       '@types/node':
         specifier: 'catalog:'
         version: 24.7.2
@@ -1756,6 +1759,9 @@ importers:
       '@thunderid/types':
         specifier: workspace:^
         version: link:../types
+      '@thunderid/utils':
+        specifier: workspace:^
+        version: link:../utils
       '@types/node':
         specifier: 'catalog:'
         version: 24.7.2
@@ -2404,6 +2410,9 @@ importers:
       human-id:
         specifier: 4.1.2
         version: 4.1.2
+      lodash-es:
+        specifier: 'catalog:'
+        version: 4.18.1
     devDependencies:
       '@thunderid/eslint-plugin':
         specifier: workspace:^
@@ -2417,6 +2426,9 @@ importers:
       '@thunderid/types':
         specifier: workspace:^
         version: link:../types
+      '@types/lodash-es':
+        specifier: 'catalog:'
+        version: 4.17.12
       '@types/node':
         specifier: 'catalog:'
         version: 24.7.2
