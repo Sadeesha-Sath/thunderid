@@ -725,12 +725,25 @@ jobs:
           fi
           chmod +x setup.sh start.sh
 
-      - name: 🚀 Start the Server
+      - name: 🔑 Resolve Admin Credentials
         env:
-          # Pin the admin credentials so setup.sh seeds a known password instead of
-          # generating a random one. The token step and Playwright below expect admin/admin.
-          ADMIN_USERNAME: admin
-          ADMIN_PASSWORD: admin
+          SECRET_ADMIN_USERNAME: ${{ secrets.PLAYWRIGHT_ADMIN_USERNAME }}
+          VAR_ADMIN_USERNAME: ${{ vars.PLAYWRIGHT_ADMIN_USERNAME }}
+          SECRET_ADMIN_PASSWORD: ${{ secrets.PLAYWRIGHT_ADMIN_PASSWORD }}
+        run: |
+          # Resolve a single admin username/password pair (Secret > Variable > defaults.env) once,
+          # up front, and reuse it for server bootstrap, token acquisition, and the Playwright run
+          # below, instead of each resolving (or hardcoding) its own copy.
+          DEFAULT_ADMIN_USERNAME=$(grep '^ADMIN_USERNAME=' tests/e2e/defaults.env | cut -d= -f2-)
+          DEFAULT_ADMIN_PASSWORD=$(grep '^ADMIN_PASSWORD=' tests/e2e/defaults.env | cut -d= -f2-)
+          ADMIN_USERNAME="${SECRET_ADMIN_USERNAME:-${VAR_ADMIN_USERNAME:-$DEFAULT_ADMIN_USERNAME}}"
+          ADMIN_PASSWORD="${SECRET_ADMIN_PASSWORD:-$DEFAULT_ADMIN_PASSWORD}"
+          echo "::add-mask::$ADMIN_PASSWORD"
+          echo "ADMIN_USERNAME=$ADMIN_USERNAME" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "✅ Resolved admin credentials (Secret > Variable > defaults.env)"
+
+      - name: 🚀 Start the Server
         run: |
           cd tests/e2e/server
           ./setup.sh
@@ -795,9 +808,15 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"executionId\": \"$EXEC_ID\"}")
           CHALLENGE_TOKEN=$(echo "$PROMPT_RESP" | jq -r '.challengeToken // empty')
+          FLOW_PAYLOAD=$(jq -n \
+            --arg executionId "$EXEC_ID" \
+            --arg challengeToken "$CHALLENGE_TOKEN" \
+            --arg username "$ADMIN_USERNAME" \
+            --arg password "$ADMIN_PASSWORD" \
+            '{executionId: $executionId, challengeToken: $challengeToken, inputs: {username: $username, password: $password}, action: "action_001"}')
           FLOW_RESP=$(curl -sk -X POST "$SERVER_URL/flow/execute" \
             -H "Content-Type: application/json" \
-            -d "{\"executionId\": \"$EXEC_ID\", \"challengeToken\": \"$CHALLENGE_TOKEN\", \"inputs\": {\"username\": \"admin\", \"password\": \"admin\"}, \"action\": \"action_001\"}")
+            -d "$FLOW_PAYLOAD")
           ASSERTION=$(echo "$FLOW_RESP" | jq -r '.assertion // empty')
           if [ -z "$ASSERTION" ]; then
             echo "❌ Flow execution did not return an assertion: $FLOW_RESP"
@@ -918,6 +937,7 @@ jobs:
             echo "Available applications:"
             echo "$APPS_RESPONSE" | jq -r '(.applications // [])[] | "  - \(.name) (\(.id))"'
             echo "sample_app_id=" >> $GITHUB_OUTPUT
+            exit 1
           else
             echo "✓ Sample App ID extracted: $SAMPLE_APP_ID"
             echo "sample_app_id=$SAMPLE_APP_ID" >> $GITHUB_OUTPUT
@@ -1029,6 +1049,15 @@ jobs:
       - name: 📦 Install E2E Dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: 📋 Load E2E Default Configuration
+        run: |
+          # Loads tests/e2e/defaults.env (the canonical fixed dataset, shared with run-e2e.sh
+          # for local runs) as DEFAULT_* so the step below can fall back to it.
+          while IFS='=' read -r key value; do
+            case "$key" in ''|'#'*) continue ;; esac
+            echo "DEFAULT_${key}=${value}" >> "$GITHUB_ENV"
+          done < tests/e2e/defaults.env
+
       - name: 🎭 Set up Playwright Browsers
         uses: ./.github/actions/setup-playwright
         with:
@@ -1040,22 +1069,25 @@ jobs:
         run: pnpm test
         working-directory: tests/e2e
         env:
-          # Configuration Priority: Secret > Variable > Hardcoded Default
-          BASE_URL: ${{ secrets.PLAYWRIGHT_BASE_URL || vars.PLAYWRIGHT_BASE_URL || 'https://localhost:8090' }}
-          ADMIN_USERNAME: ${{ secrets.PLAYWRIGHT_ADMIN_USERNAME || 'admin' }}
-          ADMIN_PASSWORD: ${{ secrets.PLAYWRIGHT_ADMIN_PASSWORD || 'admin' }}
-          TEST_USER_USERNAME: ${{ secrets.PLAYWRIGHT_TEST_USER_USERNAME || 'testuser' }}
-          TEST_USER_PASSWORD: ${{ secrets.PLAYWRIGHT_TEST_USER_PASSWORD || 'admin' }}
-          PLAYWRIGHT_WORKERS: ${{ vars.PLAYWRIGHT_WORKERS || 1 }}
-          DEBUG_AUTH: ${{ vars.PLAYWRIGHT_DEBUG_AUTH || 'false' }}
+          # Configuration Priority: Secret > Variable > tests/e2e/defaults.env (loaded above as DEFAULT_*)
+          # ADMIN_USERNAME/ADMIN_PASSWORD were already resolved once by the "Resolve Admin
+          # Credentials" step above and reused for server bootstrap and token acquisition; reuse
+          # that same pair here instead of resolving it again.
+          BASE_URL: ${{ secrets.PLAYWRIGHT_BASE_URL || vars.PLAYWRIGHT_BASE_URL || env.DEFAULT_BASE_URL }}
+          ADMIN_USERNAME: ${{ env.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ env.ADMIN_PASSWORD }}
+          TEST_USER_USERNAME: ${{ secrets.PLAYWRIGHT_TEST_USER_USERNAME || vars.PLAYWRIGHT_TEST_USER_USERNAME || env.DEFAULT_TEST_USER_USERNAME }}
+          TEST_USER_PASSWORD: ${{ secrets.PLAYWRIGHT_TEST_USER_PASSWORD || env.DEFAULT_TEST_USER_PASSWORD }}
+          PLAYWRIGHT_WORKERS: ${{ vars.PLAYWRIGHT_WORKERS || env.DEFAULT_PLAYWRIGHT_WORKERS }}
+          DEBUG_AUTH: ${{ vars.PLAYWRIGHT_DEBUG_AUTH || env.DEFAULT_DEBUG_AUTH }}
           # MFA Test Configuration
           SAMPLE_APP_ID: ${{ steps.extract-app-id.outputs.sample_app_id }}
-          SAMPLE_APP_URL: 'https://localhost:3000'
-          SERVER_URL: 'https://localhost:8090'
-          AUTO_SETUP_MFA: ${{ vars.AUTO_SETUP_MFA || 'true' }}
-          MOCK_SMS_SERVER_PORT: ${{ vars.MOCK_SMS_SERVER_PORT || 8098 }}
-          SAMPLE_APP_USERNAME: ${{ secrets.SAMPLE_APP_USERNAME || 'e2e-test-user' }}
-          SAMPLE_APP_PASSWORD: ${{ secrets.SAMPLE_APP_PASSWORD || 'e2e-test-password' }}
+          SAMPLE_APP_URL: ${{ env.DEFAULT_SAMPLE_APP_URL }}
+          SERVER_URL: ${{ env.DEFAULT_SERVER_URL }}
+          AUTO_SETUP_MFA: ${{ vars.AUTO_SETUP_MFA || env.DEFAULT_AUTO_SETUP_MFA }}
+          MOCK_SMS_SERVER_PORT: ${{ vars.MOCK_SMS_SERVER_PORT || env.DEFAULT_MOCK_SMS_SERVER_PORT }}
+          SAMPLE_APP_USERNAME: ${{ secrets.SAMPLE_APP_USERNAME || vars.SAMPLE_APP_USERNAME || env.DEFAULT_SAMPLE_APP_USERNAME }}
+          SAMPLE_APP_PASSWORD: ${{ secrets.SAMPLE_APP_PASSWORD || env.DEFAULT_SAMPLE_APP_PASSWORD }}
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}

@@ -146,9 +146,24 @@ if [ -z "$AUTH_ID" ] || [ -z "$EXEC_ID" ]; then
     exit 1
 fi
 
+# The console login flow runs an SSO check before the credentials prompt. This bootstrap is a
+# fresh, cookie-less login (no SSO session), so the first execute advances the flow past the SSO
+# check to the credentials prompt and mints a challenge token; the second submits the admin
+# credentials with that token.
+PROMPT_RESP=$(curl -sk -X POST "$SERVER_URL/flow/execute" \
+    -H "Content-Type: application/json" \
+    -d "{\"executionId\": \"$EXEC_ID\"}")
+CHALLENGE_TOKEN=$(echo "$PROMPT_RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('challengeToken', ''))" 2>/dev/null || echo "")
+
+if [ -z "$CHALLENGE_TOKEN" ]; then
+    echo "ERROR: Flow execution did not return a challenge token."
+    echo "Response: $PROMPT_RESP"
+    exit 1
+fi
+
 FLOW_RESP=$(curl -sk -X POST "$SERVER_URL/flow/execute" \
     -H "Content-Type: application/json" \
-    -d "{\"executionId\": \"$EXEC_ID\", \"inputs\": {\"username\": \"$ADMIN_USER\", \"password\": \"$ADMIN_PASS\"}, \"action\": \"action_001\"}")
+    -d "{\"executionId\": \"$EXEC_ID\", \"challengeToken\": \"$CHALLENGE_TOKEN\", \"inputs\": {\"username\": \"$ADMIN_USER\", \"password\": \"$ADMIN_PASS\"}, \"action\": \"action_001\"}")
 ASSERTION=$(echo "$FLOW_RESP" | python3 -c "import sys, json; print(json.load(sys.stdin).get('assertion', ''))" 2>/dev/null || echo "")
 
 if [ -z "$ASSERTION" ]; then
@@ -270,9 +285,16 @@ print(d.get('summary', {}).get('failed', 0))
     echo "Imported E2E test infrastructure resources."
 fi
 
-# Use the vanilla "Sample App" ID (stable UUID v7 from react-vanilla-sample/thunderid-config/basic).
+# Look up the vanilla "Sample App" ID dynamically (same mechanism CI uses), so a change to the
+# sample's declarative config can't silently desync this script from the real app id.
 # The vanilla sample is unaffected by MFA test setup/teardown, unlike the SDK sample.
-SAMPLE_APP_ID="019e3a5c-0500-7f3e-a66e-66fc7918c3a7"
+APPS_RESPONSE=$(curl -sk -H "Authorization: Bearer $ADMIN_TOKEN" "$SERVER_URL/applications")
+SAMPLE_APP_ID=$(echo "$APPS_RESPONSE" | jq -r '(.applications // [])[] | select(.name == "Sample App") | .id')
+
+if [ -z "$SAMPLE_APP_ID" ] || [ "$SAMPLE_APP_ID" = "null" ]; then
+    echo "ERROR: Could not find 'Sample App' in the applications list."
+    exit 1
+fi
 
 # 6. Build sample app (if not already built) and start it.
 echo "Setting up sample app..."
@@ -289,26 +311,22 @@ wait_for_url "$SAMPLE_URL" "Sample app"
 echo "Running Playwright E2E tests..."
 cd "$SCRIPT_DIR"
 
-# Auto-create .env with local defaults if not present.
+# Auto-create .env with local defaults if not present. Fixed defaults come from defaults.env,
+# the canonical source shared with CI.
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
     echo "Creating default .env for E2E tests..."
-    cat > "$SCRIPT_DIR/.env" <<EOF
-BASE_URL=$SERVER_URL
-SERVER_URL=$SERVER_URL
-ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
-ENVIRONMENT=local
-SAMPLE_APP_URL=$SAMPLE_URL
-SAMPLE_APP_ID=$SAMPLE_APP_ID
-SAMPLE_APP_USERNAME=e2e-test-user
-SAMPLE_APP_PASSWORD=e2e-test-password
-TEST_USER_USERNAME=testuser
-TEST_USER_PASSWORD=admin
-MOCK_SMS_SERVER_PORT=8098
-AUTO_SETUP_MFA=true
-PLAYWRIGHT_WORKERS=1
-EOF
+    cp "$SCRIPT_DIR/defaults.env" "$SCRIPT_DIR/.env"
 fi
+
+# The values resolved for this specific run (the actual server/sample URLs and the discovered
+# SAMPLE_APP_ID) always take precedence over .env, whether or not .env pre-existed: dotenv.config()
+# in playwright.config.ts does not override already-set process.env values.
+export BASE_URL="$SERVER_URL"
+export SERVER_URL="$SERVER_URL"
+export ADMIN_USERNAME="$ADMIN_USER"
+export ADMIN_PASSWORD="$ADMIN_PASS"
+export SAMPLE_APP_URL="$SAMPLE_URL"
+export SAMPLE_APP_ID="$SAMPLE_APP_ID"
 
 pnpm install --frozen-lockfile
 npx playwright test "$@"

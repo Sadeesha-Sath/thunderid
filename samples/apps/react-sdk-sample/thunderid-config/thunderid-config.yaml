@@ -49,6 +49,48 @@ schema: {
   }
 
 ---
+resource_type: flow
+id: 019e3a5c-0533-7b06-aa66-ec42ad05784f
+name: React SDK Sample Sign Out Flow
+handle: react-sdk-sample-signout-flow
+flowType: SIGNOUT
+nodes:
+- id: start
+  type: START
+  onSuccess: prompt_confirm
+- id: prompt_confirm
+  type: PROMPT
+  meta:
+    components:
+    - type: TEXT
+      id: text_signout_title
+      label: '{{ t(signout:forms.confirm.title) }}'
+      variant: HEADING_1
+    - type: TEXT
+      id: text_signout_desc
+      label: '{{ t(signout:forms.confirm.description) }}'
+      variant: BODY_1
+    - type: BLOCK
+      id: block_signout
+      components:
+      - type: ACTION
+        id: action_confirm
+        label: '{{ t(signout:forms.confirm.actions.submit.label) }}'
+        variant: PRIMARY
+        eventType: SUBMIT
+  prompts:
+  - action:
+      ref: action_confirm
+      nextNode: session_signout
+- id: session_signout
+  type: TASK_EXECUTION
+  executor:
+    name: SessionSignOutExecutor
+  onSuccess: end
+- id: end
+  type: END
+
+---
 resource_type: application
 id: 019e3a5c-0532-7b06-aa66-ec42ad05784e
 ouHandle: default
@@ -62,7 +104,10 @@ contacts:
   - admin@example.com
 authFlowHandle: default-flow
 isRegistrationFlowEnabled: true
+registrationFlowHandle: default-flow
 isRecoveryFlowEnabled: false
+signOutFlowHandle: react-sdk-sample-signout-flow
+isSignOutFlowEnabled: true
 assertion:
   validityPeriod: 3600
 loginConsent:
@@ -74,6 +119,10 @@ inboundAuthConfig:
     config:
       clientId: {{.REACT_SDK_SAMPLE_CLIENT_ID}}
       redirectUris:
+        {{- range .REACT_SDK_SAMPLE_REDIRECT_URIS}}
+        - {{.}}
+        {{- end}}
+      postLogoutRedirectUris:
         {{- range .REACT_SDK_SAMPLE_REDIRECT_URIS}}
         - {{.}}
         {{- end}}
