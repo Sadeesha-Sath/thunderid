@@ -36,11 +36,11 @@ Required environment values:
 | `SAMPLE_APP_REDIRECT_URIS` | JSON array of allowed redirect URIs |
 | `SAMPLE_APP_GOOGLE_CLIENT_ID` | Google OAuth app client ID |
 | `SAMPLE_APP_GOOGLE_CLIENT_SECRET` | Google OAuth app client secret |
-| `SAMPLE_APP_GOOGLE_REDIRECT_URI` | Redirect URI registered in Google (e.g. `https://localhost:3000/`) |
+| `SAMPLE_APP_GOOGLE_REDIRECT_URI` | ThunderID server's gate callback URL, registered in Google (e.g. `https://localhost:8090/gate/callback`), not the sample app's own URL |
 | `SAMPLE_APP_GOOGLE_SCOPES` | Scopes to request (e.g. `openid,email,profile`) |
 | `SAMPLE_APP_GITHUB_CLIENT_ID` | GitHub OAuth app client ID |
 | `SAMPLE_APP_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
-| `SAMPLE_APP_GITHUB_REDIRECT_URI` | Redirect URI registered in GitHub |
+| `SAMPLE_APP_GITHUB_REDIRECT_URI` | ThunderID server's gate callback URL, registered in GitHub (e.g. `https://localhost:8090/gate/callback`), not the sample app's own URL |
 | `SAMPLE_APP_SMS_SENDER_ID` | ID of an existing SMS notification sender in ThunderID |
 
 > `SAMPLE_APP_SMS_SENDER_ID` must reference a sender already configured in the server — the YAML does not create it.
