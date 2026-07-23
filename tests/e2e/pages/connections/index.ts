@@ -16,5 +16,4 @@
  * under the License.
  */
 
-export * from "./mfa-setup";
-export * from "./google-setup";
+export { ConnectionsPage, type GoogleConnectionFormData } from "./connections.page";

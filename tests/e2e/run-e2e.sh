@@ -108,6 +108,19 @@ fi
 ADMIN_USER="${ADMIN_USERNAME:-admin}"
 ADMIN_PASS="${ADMIN_PASSWORD:-admin}"
 
+# Redirect the backend's Google OIDC endpoints to the local mock server used by the Google
+# social login E2E tests (see utils/mock-google-oidc-server.ts), without touching the
+# checked-in deployment.yaml. Production leaves this unset, so real Google is used unchanged.
+# Port must match GOOGLE_MOCK_BASE_URL in defaults.env.
+GOOGLE_MOCK_BASE_URL="${GOOGLE_MOCK_BASE_URL:-http://localhost:8093}"
+if ! grep -q "^identity_provider:" "$DIST_HOME/deployment.yaml"; then
+    cat >> "$DIST_HOME/deployment.yaml" <<EOF
+
+identity_provider:
+  google_base_url: "$GOOGLE_MOCK_BASE_URL"
+EOF
+fi
+
 # 2. Run setup.sh once to bootstrap default resources (admin user, console app config, etc.).
 if [ ! -f "$SETUP_DONE_FLAG" ]; then
     echo "Running first-time setup..."

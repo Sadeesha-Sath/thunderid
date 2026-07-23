@@ -82,6 +82,16 @@ export class SampleAppLoginPage extends BasePage {
   }
 
   /**
+   * Click the "Continue with Google" social login trigger rendered by the auth flow.
+   * The browser navigates away to the Google (or mock) authorize endpoint as a result.
+   */
+  async clickContinueWithGoogle() {
+    const googleButton = this.page.locator('button:has-text("Continue with Google")').first();
+    await googleButton.waitFor({ state: "visible", timeout: Timeouts.DEFAULT_ACTION });
+    await googleButton.click();
+  }
+
+  /**
    * Click the login/sign in button
    */
   async clickLogin() {

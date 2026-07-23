@@ -84,6 +84,22 @@ export const ConsoleRoutes = {
 
   /** User profile settings page */
   profile: "/console/settings/profile",
+
+  /** Connections list page */
+  connections: "/console/connections",
+
+  /**
+   * Configure wizard for a branded (singleton) connection vendor, e.g. "google"
+   * @param type - The connection vendor type
+   */
+  connectionConfigure: (type: string) => `/console/connections/${type}/configure`,
+
+  /**
+   * Connection details page
+   * @param type - The connection vendor type
+   * @param id - The connection identifier
+   */
+  connectionDetails: (type: string, id: string) => `/console/connections/${type}/${id}`,
 } as const;
 
 export type ConsoleRoute = (typeof ConsoleRoutes)[keyof typeof ConsoleRoutes];
