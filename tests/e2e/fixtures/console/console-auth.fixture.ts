@@ -31,7 +31,9 @@ export const test = base.extend<AuthFixtures>({
   authenticatedPage: async ({ page }, use) => {
     // Setup authentication before test usage
     const debugAuth = process.env.DEBUG_AUTH === "true";
-    await setupAuthentication(page, baseUrl, { debug: debugAuth });
+    // Matches auth.setup.ts's AUTH_STATE_FILE override, so this reads back whichever server's
+    // session that invocation's own setup project actually wrote.
+    await setupAuthentication(page, baseUrl, { debug: debugAuth, authFilePath: process.env.AUTH_STATE_FILE });
 
     // Provide the authenticated page to the test
     await use(page);

@@ -13,6 +13,17 @@ inputs:
     description: 'Base URL of the running ThunderID server'
     required: false
     default: 'https://localhost:8090'
+  resource-url:
+    description: >-
+      Base URL to request as the OAuth2 `resource` parameter's audience, if different from
+      server-url. Defaults to server-url. Needed when the server is reached at a non-default
+      address (e.g. a second instance on another port): the bootstrapped System resource
+      server's identifier is a fixed 'https://localhost:8090/mcp' baked into the server's
+      default resource bundle (backend/cmd/server/bootstrap/01-default-resources.yaml), not
+      derived from the server's actual listening address, so the resource parameter must keep
+      matching that fixed value regardless of where the server is actually reachable.
+    required: false
+    default: ''
 
 outputs:
   token:
@@ -27,6 +38,7 @@ runs:
       shell: bash
       env:
         SERVER_URL: ${{ inputs.server-url }}
+        RESOURCE_URL: ${{ inputs.resource-url }}
         ADMIN_USERNAME: ${{ inputs.admin-username }}
         ADMIN_PASSWORD: ${{ inputs.admin-password }}
       run: |
@@ -36,8 +48,11 @@ runs:
         # authenticating the bootstrapped admin user.
         CONSOLE_REDIRECT_URI="$SERVER_URL/console"
         # Tokens are bound to a single resource server (RFC 8707), so the CONSOLE app targets the
-        # bootstrapped System resource server, mirroring the console runtime config.
-        CONSOLE_RESOURCE="$SERVER_URL/mcp"
+        # bootstrapped System resource server, mirroring the console runtime config. Its identifier
+        # is a fixed string baked into the server's bootstrap data (see resource-url's
+        # description), not derived from server-url, so it's a separate input rather than reusing
+        # server-url when the two diverge.
+        CONSOLE_RESOURCE="${RESOURCE_URL:-$SERVER_URL}/mcp"
         CODE_VERIFIER=$(openssl rand -hex 32 | cut -c1-43)
         CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
 

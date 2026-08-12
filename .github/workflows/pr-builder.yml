@@ -882,7 +882,8 @@ jobs:
     defaults:
       run:
         shell: bash
-    # Provisions and runs against two servers in sequence (core, then a fresh one for @wayfinder).
+    # Provisions two independent servers (core on 8090, Wayfinder on 8091) and runs both test
+    # suites concurrently against them - see the "Run Playwright E2E Tests" step below for why.
     timeout-minutes: 40
     steps:
       - name: 🔧 Install Required OS Utilities
@@ -929,6 +930,27 @@ jobs:
             rmdir "$EXTRACTED_DIR"
           fi
           chmod +x setup.sh start.sh
+
+      # A second, independent server instance on its own port and directory: the Wayfinder specs
+      # import a config bundle that fully replaces the server-wide CORS allowlist and default
+      # resource server, so they can never share a backend with the core suite. Running it on 8091
+      # alongside the core server on 8090 (instead of provisioning it after the core phase tears
+      # down) lets both test suites run at the same time later in this job.
+      - name: 📂 Extract Server to E2E (Wayfinder)
+        run: |
+          mkdir -p tests/e2e/server-wayfinder
+          unzip target/dist/$PRODUCT_NAME_LOWER-*.zip -d tests/e2e/server-wayfinder
+          cd tests/e2e/server-wayfinder
+          EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "$PRODUCT_NAME_LOWER-*" | head -n 1)
+          if [ -n "$EXTRACTED_DIR" ]; then
+            mv "$EXTRACTED_DIR"/* .
+            rmdir "$EXTRACTED_DIR"
+          fi
+          chmod +x setup.sh start.sh
+          # setup.sh derives its BASE_URL and bootstrap config from this file's server.port, so it
+          # must be rewritten before ./setup.sh runs rather than passed as a start.sh flag after.
+          sed -i '0,/port: 8090/s//port: 8091/' deployment.yaml
+          sed -i 's#https://localhost:8090#https://localhost:8091#' deployment.yaml
 
       - name: 🔑 Resolve Admin Credentials
         env:
@@ -986,7 +1008,39 @@ jobs:
           fi
           
           echo "Server started successfully!"
-      
+
+      - name: 🚀 Start the Server (Wayfinder)
+        run: |
+          cd tests/e2e/server-wayfinder
+          # setup.sh's own bootstrap step shells out to `start.sh --bootstrap` without a --port
+          # flag, so without BACKEND_PORT in its environment that nested call silently defaults to
+          # 8090 and registers the "System" resource server's URL at that port - a mismatch with
+          # the 8091 this server actually serves on, which breaks admin token exchange later
+          # ("resource parameter does not match any registered resource server"). start.sh reads
+          # BACKEND_PORT straight from the environment (`BACKEND_PORT=${BACKEND_PORT:-8090}`), so
+          # exporting it here reaches that nested call too.
+          export BACKEND_PORT=8091
+          ./setup.sh
+          # See "Start the Server" above for why setsid is needed inside container jobs.
+          setsid ./start.sh --port 8091 > "$GITHUB_WORKSPACE/server-wayfinder.log" 2>&1 < /dev/null &
+          SERVER_PID_WAYFINDER=$!
+          echo "SERVER_PID_WAYFINDER=$SERVER_PID_WAYFINDER" >> $GITHUB_ENV
+          disown $SERVER_PID_WAYFINDER 2>/dev/null || true
+          echo "Waiting for server to be ready on https://localhost:8091..."
+          for i in {1..60}; do
+            if curl -s -k https://localhost:8091/health/liveness > /dev/null; then
+              echo "Server is UP!"
+              break
+            fi
+            echo "Still waiting ($i/60)..."
+            sleep 2
+          done
+          if ! curl -s -k https://localhost:8091/health/liveness > /dev/null; then
+            echo "Server failed to start within 2 minutes"
+            exit 1
+          fi
+          echo "Server started successfully!"
+
       - name: 🔑 Obtain Admin Access Token
         id: admin-token
         uses: ./.github/actions/obtain-admin-token
@@ -1148,135 +1202,34 @@ jobs:
           
           echo "Sample App started successfully!"
 
-      # Scoped to the E2E package: it has no workspace dependencies, so installing
-      # the whole monorepo here only added time and dragged in native builds from
-      # unrelated sample apps.
-      - name: 📦 Install E2E Dependencies
-        run: pnpm install --frozen-lockfile --filter @thunderid/e2e
-
-      # Pull requests run the Chromium project only, and the merge queue runs all
-      # three browsers, so nothing reaches main without the full matrix. On a pull
-      # request that is 68 of the 174 tests.
-
-      # The Wayfinder specs (tagged @wayfinder) import a config bundle that replaces the
-      # server-wide CORS allowlist and default resource server (full-replace import semantics),
-      # so they must not share a server with anything that depends on either setting; run them
-      # separately, below, against their own freshly provisioned server.
-      - name: 🎭 Run Playwright E2E Tests (core)
-        run: |
-          if [ -n "$PLAYWRIGHT_PROJECT_FILTER" ]; then
-            echo "Running Playwright projects matching '$PLAYWRIGHT_PROJECT_FILTER'"
-            pnpm test --project="$PLAYWRIGHT_PROJECT_FILTER" --grep-invert @wayfinder --pass-with-no-tests
-          else
-            echo "Running every Playwright project"
-            pnpm test --grep-invert @wayfinder --pass-with-no-tests
-          fi
-        working-directory: tests/e2e
-        env:
-          # setup comes along as the chromium project's dependency. Empty on
-          # merge_group and workflow_dispatch, which run every project.
-          PLAYWRIGHT_PROJECT_FILTER: ${{ github.event_name == 'pull_request' && 'chromium' || '' }}
-          # Configuration Priority: Secret > Variable > tests/e2e/defaults.env (loaded above as DEFAULT_*)
-          # ADMIN_USERNAME/ADMIN_PASSWORD were already resolved once by the "Resolve Admin
-          # Credentials" step above and reused for server bootstrap and token acquisition; reuse
-          # that same pair here instead of resolving it again.
-          BASE_URL: ${{ secrets.PLAYWRIGHT_BASE_URL || vars.PLAYWRIGHT_BASE_URL || env.DEFAULT_BASE_URL }}
-          ADMIN_USERNAME: ${{ env.ADMIN_USERNAME }}
-          ADMIN_PASSWORD: ${{ env.ADMIN_PASSWORD }}
-          TEST_USER_USERNAME: ${{ secrets.PLAYWRIGHT_TEST_USER_USERNAME || vars.PLAYWRIGHT_TEST_USER_USERNAME || env.DEFAULT_TEST_USER_USERNAME }}
-          TEST_USER_PASSWORD: ${{ secrets.PLAYWRIGHT_TEST_USER_PASSWORD || env.DEFAULT_TEST_USER_PASSWORD }}
-          PLAYWRIGHT_WORKERS: ${{ vars.PLAYWRIGHT_WORKERS || env.DEFAULT_PLAYWRIGHT_WORKERS }}
-          DEBUG_AUTH: ${{ vars.PLAYWRIGHT_DEBUG_AUTH || env.DEFAULT_DEBUG_AUTH }}
-          # MFA Test Configuration
-          SAMPLE_APP_URL: ${{ env.DEFAULT_SAMPLE_APP_URL }}
-          SERVER_URL: ${{ env.DEFAULT_SERVER_URL }}
-          AUTO_SETUP_MFA: ${{ vars.AUTO_SETUP_MFA || env.DEFAULT_AUTO_SETUP_MFA }}
-          MOCK_SMS_SERVER_PORT: ${{ vars.MOCK_SMS_SERVER_PORT || env.DEFAULT_MOCK_SMS_SERVER_PORT }}
-          SAMPLE_APP_USERNAME: ${{ secrets.SAMPLE_APP_USERNAME || vars.SAMPLE_APP_USERNAME || env.DEFAULT_SAMPLE_APP_USERNAME }}
-          SAMPLE_APP_PASSWORD: ${{ secrets.SAMPLE_APP_PASSWORD || env.DEFAULT_SAMPLE_APP_PASSWORD }}
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: ${{ !cancelled() }}
-        with:
-          name: playwright-report
-          path: tests/e2e/playwright-report/
-          retention-days: 30
-
-      - name: 🛑 Stop the Server
-        if: ${{ !cancelled() }}
-        run: |
-          kill $SERVER_PID 2>/dev/null || true
-          sleep 2
-          if lsof -ti tcp:8090 >/dev/null 2>&1; then
-            kill -9 $(lsof -ti tcp:8090) 2>/dev/null || true
-          fi
-          sleep 3
-          rm -rf tests/e2e/server
-
-      # A fresh server for the Wayfinder specs: same distribution zip, re-extracted so the CORS
-      # allowlist and default resource server the previous phase set are gone, and importing only
-      # the E2E admin app so there is no `Customer` user type for the Wayfinder bundle's own
-      # `Customer` user type to collide with. Runs regardless of the core phase's result - a
-      # different server, so the core phase's failure tells us nothing about this one (mirrors
-      # run-e2e.sh's run_phase, which does the same for the same reason).
-      - name: 📂 Extract Fresh Server for Wayfinder Tests
-        if: ${{ !cancelled() }}
-        run: |
-          mkdir -p tests/e2e/server
-          unzip target/dist/$PRODUCT_NAME_LOWER-*.zip -d tests/e2e/server
-          cd tests/e2e/server
-          EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "$PRODUCT_NAME_LOWER-*" | head -n 1)
-          if [ -n "$EXTRACTED_DIR" ]; then
-            mv "$EXTRACTED_DIR"/* .
-            rmdir "$EXTRACTED_DIR"
-          fi
-          chmod +x setup.sh start.sh
-
-      - name: 🚀 Start the Server (Wayfinder)
-        if: ${{ !cancelled() }}
-        run: |
-          cd tests/e2e/server
-          ./setup.sh
-          setsid ./start.sh > "$GITHUB_WORKSPACE/server-wayfinder.log" 2>&1 < /dev/null &
-          SERVER_PID=$!
-          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
-          disown $SERVER_PID 2>/dev/null || true
-          echo "Waiting for server to be ready on https://localhost:8090..."
-          for i in {1..60}; do
-            if curl -s -k https://localhost:8090/health/liveness > /dev/null; then
-              echo "Server is UP!"
-              break
-            fi
-            echo "Still waiting ($i/60)..."
-            sleep 2
-          done
-          if ! curl -s -k https://localhost:8090/health/liveness > /dev/null; then
-            echo "Server failed to start within 2 minutes"
-            exit 1
-          fi
-          echo "Server started successfully!"
-
       - name: 🔑 Obtain Admin Access Token (Wayfinder)
-        if: ${{ !cancelled() }}
         id: admin-token-wayfinder
         uses: ./.github/actions/obtain-admin-token
         with:
           admin-username: ${{ env.ADMIN_USERNAME }}
           admin-password: ${{ env.ADMIN_PASSWORD }}
+          server-url: https://localhost:8091
+          # The bootstrapped System resource server's identifier is fixed at
+          # https://localhost:8090/mcp regardless of the server's actual port (see
+          # obtain-admin-token's resource-url input), so this must stay 8090 even though the
+          # Wayfinder server itself is reached at 8091 for every other call.
+          resource-url: https://localhost:8090
 
       - name: 📦 Import E2E Admin App (Wayfinder)
-        if: ${{ !cancelled() }}
         uses: ./.github/actions/import-declarative-config
         with:
           config-path: tests/e2e/thunderid-config.yaml
           admin-token: ${{ steps.admin-token-wayfinder.outputs.token }}
           label: E2E admin app
+          server-url: https://localhost:8091
 
       - name: 🚀 Start Wayfinder Sample App
-        if: ${{ !cancelled() }}
         run: |
           cd samples/apps/wayfinder-sample/frontend
           cp .env.example .env
+          # .env.example points at the default core server port; repoint it at the Wayfinder
+          # server this app's own OAuth client and seed data were imported into.
+          sed -i 's#https://localhost:8090#https://localhost:8091#' .env
           npm install
           setsid npm run dev > "$GITHUB_WORKSPACE/wayfinder-app.log" 2>&1 < /dev/null &
           disown $! 2>/dev/null || true
@@ -1295,32 +1248,123 @@ jobs:
             exit 1
           fi
 
-      - name: 🎭 Run Playwright E2E Tests (Wayfinder)
-        if: ${{ !cancelled() }}
+      # Scoped to the E2E package: it has no workspace dependencies, so installing
+      # the whole monorepo here only added time and dragged in native builds from
+      # unrelated sample apps.
+      - name: 📦 Install E2E Dependencies
+        run: pnpm install --frozen-lockfile --filter @thunderid/e2e
+
+      # Pull requests run the Chromium project only, and the merge queue runs all
+      # three browsers, so nothing reaches main without the full matrix. On a pull
+      # request that is 68 of the 174 tests.
+
+      # Runs core and Wayfinder at the same time, each against its own server (core: 8090,
+      # Wayfinder: 8091, both already up from the steps above) - the Wayfinder specs import a
+      # config bundle that fully replaces the server-wide CORS allowlist and default resource
+      # server, so they can never share a backend with the core suite, but two independent
+      # backends can be driven concurrently from the same job. `npx playwright test` is invoked
+      # directly rather than through `pnpm test`: its pretest (clean-reports) and posttest
+      # (merge-reports) hooks assume one invocation at a time and would race - one deleting or
+      # merging the other's in-flight report - if both ran together.
+      - name: 🎭 Run Playwright E2E Tests (core + Wayfinder)
         run: |
-          if [ -n "$PLAYWRIGHT_PROJECT_FILTER" ]; then
-            echo "Running Playwright projects matching '$PLAYWRIGHT_PROJECT_FILTER'"
-            pnpm test --project="$PLAYWRIGHT_PROJECT_FILTER" --output=test-results-wayfinder --grep @wayfinder --pass-with-no-tests
-          else
-            echo "Running every Playwright project"
-            pnpm test --output=test-results-wayfinder --grep @wayfinder --pass-with-no-tests
+          # Split the configured worker budget across the two concurrent runs so together they
+          # don't oversubscribe the runner's 4 vCPUs by each claiming the full worker count.
+          # Wayfinder's suite is a small fraction of core's (wayfinder-setup and wayfinder-tryout
+          # vs. the full browser matrix), so it gets a fixed, small share and core gets the rest -
+          # a 50/50 split would starve core for no benefit to Wayfinder's much shorter run. This is
+          # CI-only: run-e2e.sh runs the same two project sets sequentially, one process at a time,
+          # so it never needs to split PLAYWRIGHT_WORKERS at all.
+          WAYFINDER_WORKERS=1
+          CORE_WORKERS=$(( PLAYWRIGHT_WORKERS_TOTAL - WAYFINDER_WORKERS ))
+          [ "$CORE_WORKERS" -ge 1 ] || CORE_WORKERS=1
+
+          (
+            export BASE_URL="$CORE_BASE_URL"
+            export SERVER_URL="$CORE_SERVER_URL"
+            export SAMPLE_APP_URL="$CORE_SAMPLE_APP_URL"
+            export TEST_USER_USERNAME="$CORE_TEST_USER_USERNAME"
+            export TEST_USER_PASSWORD="$CORE_TEST_USER_PASSWORD"
+            export AUTO_SETUP_MFA="$CORE_AUTO_SETUP_MFA"
+            export MOCK_SMS_SERVER_PORT="$CORE_MOCK_SMS_SERVER_PORT"
+            export SAMPLE_APP_USERNAME="$CORE_SAMPLE_APP_USERNAME"
+            export SAMPLE_APP_PASSWORD="$CORE_SAMPLE_APP_PASSWORD"
+            export PLAYWRIGHT_WORKERS="$CORE_WORKERS"
+            # Each invocation runs its own copy of the [setup] project (chromium/wayfinder-setup
+            # both depend on it), which authenticates against a different server and writes the
+            # session it captures to this file - without separate paths the two would race on the
+            # same file and tests would randomly load the other server's session.
+            export AUTH_STATE_FILE=playwright/.auth/console-admin-core.json
+            if [ -n "$CORE_PROJECT_FILTER" ]; then
+              npx playwright test --project $CORE_PROJECT_FILTER --grep-invert @wayfinder --pass-with-no-tests
+            else
+              npx playwright test --grep-invert @wayfinder --pass-with-no-tests
+            fi
+          ) &
+          CORE_TEST_PID=$!
+
+          (
+            export BASE_URL="$WAYFINDER_BASE_URL"
+            export SERVER_URL="$WAYFINDER_SERVER_URL"
+            export WAYFINDER_APP_URL="http://localhost:5173"
+            export PLAYWRIGHT_WORKERS="$WAYFINDER_WORKERS"
+            export AUTH_STATE_FILE=playwright/.auth/console-admin-wayfinder.json
+            export PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report-wayfinder
+            export PLAYWRIGHT_JSON_OUTPUT_FILE=test-results-wayfinder/test-results.json
+            export PLAYWRIGHT_JUNIT_OUTPUT_FILE=test-results-wayfinder/junit.xml
+            export PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report-wayfinder
+            if [ -n "$WAYFINDER_PROJECT_FILTER" ]; then
+              npx playwright test --project $WAYFINDER_PROJECT_FILTER --output=test-results-wayfinder --grep @wayfinder --pass-with-no-tests
+            else
+              npx playwright test --output=test-results-wayfinder --grep @wayfinder --pass-with-no-tests
+            fi
+          ) &
+          WAYFINDER_TEST_PID=$!
+
+          RC1=0
+          RC2=0
+          wait $CORE_TEST_PID || RC1=$?
+          wait $WAYFINDER_TEST_PID || RC2=$?
+          if [ $RC1 -ne 0 ] || [ $RC2 -ne 0 ]; then
+            echo "❌ core exited $RC1, Wayfinder exited $RC2"
+            exit 1
           fi
         working-directory: tests/e2e
         env:
-          # wayfinder-sample-setup.spec.ts and tests/wayfinder/** run through their own dedicated
-          # projects (see playwright.config.ts), not the plain chromium/firefox/webkit ones - a
-          # bare 'chromium' filter would match neither and silently run zero Wayfinder tests.
-          PLAYWRIGHT_PROJECT_FILTER: ${{ github.event_name == 'pull_request' && 'wayfinder-*' || '' }}
-          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report-wayfinder
-          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results-wayfinder/test-results.json
-          PLAYWRIGHT_JUNIT_OUTPUT_FILE: test-results-wayfinder/junit.xml
-          BASE_URL: ${{ secrets.PLAYWRIGHT_BASE_URL || vars.PLAYWRIGHT_BASE_URL || env.DEFAULT_BASE_URL }}
+          PLAYWRIGHT_WORKERS_TOTAL: ${{ vars.PLAYWRIGHT_WORKERS || env.DEFAULT_PLAYWRIGHT_WORKERS }}
+          # Configuration Priority: Secret > Variable > tests/e2e/defaults.env (loaded above as DEFAULT_*)
+          # ADMIN_USERNAME/ADMIN_PASSWORD were already resolved once by the "Resolve Admin
+          # Credentials" step above and reused for server bootstrap and token acquisition; reuse
+          # that same pair here instead of resolving it again. Both servers share one admin user.
           ADMIN_USERNAME: ${{ env.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ env.ADMIN_PASSWORD }}
-          WAYFINDER_APP_URL: http://localhost:5173
-          PLAYWRIGHT_WORKERS: ${{ vars.PLAYWRIGHT_WORKERS || env.DEFAULT_PLAYWRIGHT_WORKERS }}
           DEBUG_AUTH: ${{ vars.PLAYWRIGHT_DEBUG_AUTH || env.DEFAULT_DEBUG_AUTH }}
-          SERVER_URL: ${{ env.DEFAULT_SERVER_URL }}
+          # Core-run configuration. setup comes along as the chromium project's dependency. Empty
+          # on merge_group and workflow_dispatch, which run every project.
+          CORE_PROJECT_FILTER: ${{ github.event_name == 'pull_request' && 'chromium' || '' }}
+          CORE_BASE_URL: ${{ secrets.PLAYWRIGHT_BASE_URL || vars.PLAYWRIGHT_BASE_URL || env.DEFAULT_BASE_URL }}
+          CORE_SERVER_URL: ${{ env.DEFAULT_SERVER_URL }}
+          # MFA Test Configuration
+          CORE_SAMPLE_APP_URL: ${{ env.DEFAULT_SAMPLE_APP_URL }}
+          CORE_TEST_USER_USERNAME: ${{ secrets.PLAYWRIGHT_TEST_USER_USERNAME || vars.PLAYWRIGHT_TEST_USER_USERNAME || env.DEFAULT_TEST_USER_USERNAME }}
+          CORE_TEST_USER_PASSWORD: ${{ secrets.PLAYWRIGHT_TEST_USER_PASSWORD || env.DEFAULT_TEST_USER_PASSWORD }}
+          CORE_AUTO_SETUP_MFA: ${{ vars.AUTO_SETUP_MFA || env.DEFAULT_AUTO_SETUP_MFA }}
+          CORE_MOCK_SMS_SERVER_PORT: ${{ vars.MOCK_SMS_SERVER_PORT || env.DEFAULT_MOCK_SMS_SERVER_PORT }}
+          CORE_SAMPLE_APP_USERNAME: ${{ secrets.SAMPLE_APP_USERNAME || vars.SAMPLE_APP_USERNAME || env.DEFAULT_SAMPLE_APP_USERNAME }}
+          CORE_SAMPLE_APP_PASSWORD: ${{ secrets.SAMPLE_APP_PASSWORD || env.DEFAULT_SAMPLE_APP_PASSWORD }}
+          # Wayfinder-run configuration. wayfinder-sample-setup.spec.ts and tests/wayfinder/** run
+          # through their own dedicated projects (see playwright.config.ts), not the plain
+          # chromium/firefox/webkit ones - a bare 'chromium' filter would match neither.
+          WAYFINDER_PROJECT_FILTER: ${{ github.event_name == 'pull_request' && 'wayfinder-*' || '' }}
+          WAYFINDER_BASE_URL: ${{ secrets.PLAYWRIGHT_BASE_URL || vars.PLAYWRIGHT_BASE_URL || 'https://localhost:8091' }}
+          WAYFINDER_SERVER_URL: https://localhost:8091
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+          retention-days: 30
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}
@@ -1329,6 +1373,27 @@ jobs:
           path: tests/e2e/playwright-report-wayfinder/
           retention-days: 30
 
+      - name: 🛑 Stop the Server
+        if: ${{ !cancelled() }}
+        run: |
+          kill $SERVER_PID 2>/dev/null || true
+          sleep 2
+          if lsof -ti tcp:8090 >/dev/null 2>&1; then
+            kill -9 $(lsof -ti tcp:8090) 2>/dev/null || true
+          fi
+          sleep 3
+          rm -rf tests/e2e/server
+
+      - name: 🛑 Stop the Server (Wayfinder)
+        if: ${{ !cancelled() }}
+        run: |
+          kill $SERVER_PID_WAYFINDER 2>/dev/null || true
+          sleep 2
+          if lsof -ti tcp:8091 >/dev/null 2>&1; then
+            kill -9 $(lsof -ti tcp:8091) 2>/dev/null || true
+          fi
+          sleep 3
+          rm -rf tests/e2e/server-wayfinder
 
   build-docs:
     name: 📚 Build Documentation

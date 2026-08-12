@@ -21,8 +21,14 @@ import path from "path";
 import fs from "fs";
 import { Timeouts } from "../../constants/timeouts";
 
-/** Path to save authentication state */
-const AUTH_FILE = path.join(__dirname, "../../playwright/.auth/console-admin.json");
+/**
+ * Path to save authentication state. Overridable via AUTH_STATE_FILE (resolved against cwd) so
+ * two concurrent `playwright test` invocations against different servers - each running their
+ * own copy of this setup project - don't race on the same file and load each other's session.
+ */
+const AUTH_FILE = process.env.AUTH_STATE_FILE
+  ? path.resolve(process.env.AUTH_STATE_FILE)
+  : path.join(__dirname, "../../playwright/.auth/console-admin.json");
 
 setup("Admin login test", async ({ page, context, signinPage }) => {
   const authDir = path.dirname(AUTH_FILE);
