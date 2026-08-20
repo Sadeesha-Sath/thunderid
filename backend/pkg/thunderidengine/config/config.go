@@ -5,7 +5,11 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TrustedIssuerConfig holds configuration for trusted external issuer authentication.
@@ -422,4 +426,147 @@ type LogConfig struct {
 	Level string `yaml:"level" json:"level"`
 	// Format selects the record format: "json" or "text" (default).
 	Format string `yaml:"format" json:"format"`
+}
+
+// OriginConfig holds the allowed cross-origin origins for the engine's CORS-enabled endpoints
+// (well-known discovery, JWKS, token, userinfo, and the rest of the OAuth surface). An empty
+// AllowedOrigins leaves CORS disabled: no cross-origin request is allowed to read a response.
+//
+// The field uses the camelCase "allowedOrigins" tag (rather than this file's usual snake_case) to
+// match the wire format the engine re-encodes it to internally.
+type OriginConfig struct {
+	AllowedOrigins []OriginEntry `yaml:"allowedOrigins" json:"allowedOrigins"`
+}
+
+// UnmarshalJSON decodes cfg, leaving AllowedOrigins nil when the field is omitted but rejecting
+// an explicit "allowedOrigins": null, which would otherwise be indistinguishable from omission
+// and silently disable CORS instead of failing validation.
+func (c *OriginConfig) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		AllowedOrigins json.RawMessage `json:"allowedOrigins"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.AllowedOrigins == nil {
+		c.AllowedOrigins = nil
+		return nil
+	}
+	if string(raw.AllowedOrigins) == "null" {
+		return fmt.Errorf("thunderidengine: allowedOrigins must be a list, not null")
+	}
+	var entries []OriginEntry
+	if err := json.Unmarshal(raw.AllowedOrigins, &entries); err != nil {
+		return err
+	}
+	c.AllowedOrigins = entries
+	return nil
+}
+
+// UnmarshalYAML decodes cfg, leaving AllowedOrigins nil when the field is omitted but rejecting
+// an explicit "allowedOrigins: null" for the same reason as UnmarshalJSON.
+func (c *OriginConfig) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("thunderidengine: origin configuration must be a mapping")
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value != "allowedOrigins" {
+			continue
+		}
+		value := node.Content[i+1]
+		if value.Tag == "!!null" {
+			return fmt.Errorf("thunderidengine: allowedOrigins must be a list, not null")
+		}
+		var entries []OriginEntry
+		if err := value.Decode(&entries); err != nil {
+			return err
+		}
+		c.AllowedOrigins = entries
+		return nil
+	}
+	c.AllowedOrigins = nil
+	return nil
+}
+
+// OriginEntry is one allowed-origin entry: exactly one of Origin (a literal origin, e.g.
+// "https://app.example.com") or Regex (a fully anchored pattern, e.g. "^https://.*\\.example\\.com$")
+// must be set. Decoding from YAML or JSON enforces this; a bare string decodes to Origin, and an
+// object of the shape { regex: "..." } decodes to Regex.
+type OriginEntry struct {
+	Origin string
+	Regex  string
+}
+
+// toEntry renders the origin as its wire form: a bare string for a literal, or a { "regex": ... }
+// object for a pattern.
+func (o OriginEntry) toEntry() (any, error) {
+	switch {
+	case o.Origin != "" && o.Regex != "":
+		return nil, fmt.Errorf("thunderidengine: OriginEntry must set exactly one of Origin or Regex, got both")
+	case o.Regex != "":
+		return map[string]string{"regex": o.Regex}, nil
+	case o.Origin != "":
+		return o.Origin, nil
+	default:
+		return nil, fmt.Errorf("thunderidengine: OriginEntry must set exactly one of Origin or Regex, got neither")
+	}
+}
+
+// MarshalJSON encodes the origin to its wire form.
+func (o OriginEntry) MarshalJSON() ([]byte, error) {
+	entry, err := o.toEntry()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(entry)
+}
+
+// MarshalYAML encodes the origin to its wire form.
+func (o OriginEntry) MarshalYAML() (any, error) {
+	return o.toEntry()
+}
+
+// UnmarshalJSON decodes a JSON string into Origin, or an object of the shape { "regex": "..." }
+// into Regex.
+func (o *OriginEntry) UnmarshalJSON(data []byte) error {
+	var literal string
+	if err := json.Unmarshal(data, &literal); err == nil {
+		*o = OriginEntry{Origin: literal}
+		return nil
+	}
+	var obj struct {
+		Regex string `json:"regex"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("thunderidengine: origin entry must be a string or { regex: ... } object: %w", err)
+	}
+	if obj.Regex == "" {
+		return fmt.Errorf("thunderidengine: origin entry: regex object missing 'regex' field")
+	}
+	*o = OriginEntry{Regex: obj.Regex}
+	return nil
+}
+
+// UnmarshalYAML decodes a YAML scalar into Origin, or a mapping of the shape { regex: "..." } into
+// Regex.
+func (o *OriginEntry) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		*o = OriginEntry{Origin: node.Value}
+		return nil
+	case yaml.MappingNode:
+		var obj struct {
+			Regex string `yaml:"regex"`
+		}
+		if err := node.Decode(&obj); err != nil {
+			return fmt.Errorf("thunderidengine: origin entry: %w", err)
+		}
+		if obj.Regex == "" {
+			return fmt.Errorf("thunderidengine: origin entry: regex object missing 'regex' field")
+		}
+		*o = OriginEntry{Regex: obj.Regex}
+		return nil
+	default:
+		return fmt.Errorf("thunderidengine: origin entry must be a string or { regex: ... } object")
+	}
 }

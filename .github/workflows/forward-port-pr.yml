@@ -161,6 +161,7 @@ jobs:
           ORIGINAL_URL: ${{ github.event.pull_request.html_url }}
           ORIGINAL_BODY: ${{ github.event.pull_request.body }}
         with:
+          github-token: ${{ secrets.THUNDER_AUTOMATION_BOT }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;

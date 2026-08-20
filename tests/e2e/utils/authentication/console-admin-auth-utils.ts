@@ -25,6 +25,16 @@ import { ConsoleSigninPage } from "../../pages/authentication/console-signin.pag
 /** Re-login this far ahead of the real expiry, so a token can't lapse mid-test. */
 const TOKEN_EXPIRY_MARGIN_MS = Timeouts.GLOBAL_TEST;
 
+/** Handle returned by context.addInitScript(), used to remove that specific script later. */
+type InitScriptHandle = Awaited<ReturnType<BrowserContext["addInitScript"]>>;
+
+/**
+ * Substring of the sessionStorage key the @thunderid SDK stores its OIDC session (access/refresh
+ * tokens, expiry) under. Shared between checkTokensExpired() and resyncStorageBeforeNavigation()
+ * so both agree on exactly which key represents "the session," and nothing else does.
+ */
+const SESSION_DATA_KEY_SUBSTRING = "session_data-instance_0";
+
 export interface StorageItem {
   name: string;
   value: string;
@@ -113,6 +123,12 @@ export async function restoreCookies(
 /**
  * Create init script to inject storage state BEFORE page loads
  * This is critical for OAuth2/OIDC apps that check tokens on page load
+ *
+ * context.addInitScript() runs this on every new document in the context, not just the console -
+ * including any popup a test opens (e.g. a future OAuth consent flow) that lands on a different
+ * origin. Without an origin check, this would blindly write the console's session data into
+ * whatever unrelated origin loads next. Guarded here so both callers (setupAuthentication and
+ * resyncStorageBeforeNavigation) get this for free.
  */
 export function createStorageInitScript(authState: AuthState): string {
   const origin = authState.origins?.[0];
@@ -126,6 +142,8 @@ export function createStorageInitScript(authState: AuthState): string {
   // Create a script that injects storage items
   const script = `
     (function() {
+      if (window.location.origin !== ${JSON.stringify(origin.origin)}) return;
+
       // Inject localStorage items
       ${localStorage
         .map(
@@ -133,7 +151,7 @@ export function createStorageInitScript(authState: AuthState): string {
             `try { localStorage.setItem(${JSON.stringify(item.name)}, ${JSON.stringify(item.value)}); } catch(e) {}`
         )
         .join("\n      ")}
-      
+
       // Inject sessionStorage items
       ${sessionStorage
         .map(
@@ -150,12 +168,15 @@ export function createStorageInitScript(authState: AuthState): string {
 /**
  * Setup authentication for a test by loading and injecting auth state.
  * If auth file doesn't exist or tokens are expired, performs inline login.
+ *
+ * Returns the resolved per-worker auth file path, so the caller can re-save whatever session
+ * the page ends up holding once the test is done with it (see saveAuthState's doc comment).
  */
 export async function setupAuthentication(
   page: Page,
   baseUrl: string,
   options: SetupAuthenticationOptions = {}
-): Promise<void> {
+): Promise<string> {
   const { debug = false, authFilePath } = options;
 
   // Default auth file path. Keyed by worker index: the backend rotates refresh tokens and
@@ -179,13 +200,13 @@ export async function setupAuthentication(
   if (!authState) {
     console.log("⚠️ No usable auth state, performing inline login...");
     await performInlineLogin(page, baseUrl, authPath, debug);
-    return;
+    return authPath;
   }
 
   if (checkTokensExpired(authState, debug)) {
     console.log("⚠️ Tokens expired, performing inline login...");
     await performInlineLogin(page, baseUrl, authPath, debug);
-    return;
+    return authPath;
   }
 
   console.log(
@@ -209,6 +230,85 @@ export async function setupAuthentication(
       console.log("🔍 [DEBUG] Added init script to inject storage on page load");
     }
   }
+
+  return authPath;
+}
+
+/**
+ * Re-inject the SDK's own session key as an additional init script, so the next navigation on
+ * this page doesn't revert it to the snapshot addInitScript was originally registered with.
+ * addInitScript re-runs its original script, unchanged, on every new document for the life of the
+ * context - including a plain page.reload() or a mid-test page.goto() - so if the SDK silently
+ * rotated the access/refresh token pair earlier in this test (see saveAuthState's doc comment), a
+ * later navigation would otherwise replay the stale, already-used refresh token and trigger the
+ * same family revocation mid-test instead of just across tests.
+ *
+ * Deliberately scoped to just that one sessionStorage key (see SESSION_DATA_KEY_SUBSTRING) -
+ * never the rest of storage. A test can register its own init script for unrelated state between
+ * fixture setup and its own navigation (e.g. welcome-screen.spec.ts's simulateFirstStart()
+ * clearing the welcome-dismissed flag right before its own goto()); reinjecting a full snapshot of
+ * whatever this page happened to hold before this navigation would silently overwrite that,
+ * undoing the test's own setup instead of just protecting the session.
+ *
+ * Pass the handle this returned last time as `previous` so it gets disposed (removed) right
+ * before the fresh one is registered - otherwise every navigation in a test would pile on another
+ * script forever. Callers should hold on to the returned handle and pass it back in on the next
+ * call; the very first call in a test has nothing to pass.
+ *
+ * No-ops quietly (returning `previous` unchanged) if there's no session key to resync yet - e.g.
+ * the page is still on about:blank before the test's first navigation, it ended up on a different
+ * origin (see saveAuthState's origin guard for why that's treated the same way), or the SDK simply
+ * hasn't written a session yet.
+ */
+export async function resyncStorageBeforeNavigation(
+  page: Page,
+  baseUrl: string,
+  previous?: InitScriptHandle
+): Promise<InitScriptHandle | undefined> {
+  if (safeOrigin(page.url()) !== safeOrigin(baseUrl)) {
+    return previous;
+  }
+
+  // Scoped to the SDK's own session key only - never the rest of sessionStorage (or any of
+  // localStorage). A test can register its own later init script to manipulate other state (e.g.
+  // welcome-screen.spec.ts's simulateFirstStart() clearing the welcome-dismissed flag right before
+  // its own goto()); reinjecting a full snapshot capturing whatever this page held before this
+  // navigation would silently overwrite that, undoing the test's own setup.
+  const sessionEntries = await page
+    .evaluate(
+      keySubstring =>
+        Object.entries({ ...window.sessionStorage })
+          .filter(([name]) => name.includes(keySubstring))
+          .map(([name, value]) => ({ name, value })),
+      SESSION_DATA_KEY_SUBSTRING
+    )
+    .catch(() => null);
+
+  if (!sessionEntries || sessionEntries.length === 0) {
+    return previous;
+  }
+
+  const script = createStorageInitScript({
+    cookies: [],
+    origins: [{ origin: baseUrl, sessionStorage: sessionEntries }],
+  });
+
+  if (!script) {
+    return previous;
+  }
+
+  const handle = await page.context().addInitScript(script);
+  await previous?.dispose();
+  return handle;
+}
+
+/** Origin of a URL, or null if it can't be parsed as one. */
+function safeOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -230,7 +330,7 @@ function loadAuthStateNoThrow(filePath: string, debug: boolean): AuthState | nul
  */
 function checkTokensExpired(authState: AuthState, debug: boolean): boolean {
   const sessionDataKey = authState.origins?.[0]?.sessionStorage?.find(item =>
-    item.name.includes("session_data-instance_0")
+    item.name.includes(SESSION_DATA_KEY_SUBSTRING)
   );
 
   if (!sessionDataKey) {
@@ -333,9 +433,44 @@ Please ensure they are set in your .env file or the test environment configurati
 }
 
 /**
- * Save authentication state to file
+ * Delete a worker's auth file so the next test performs a fresh login instead of loading it.
+ *
+ * Called when the authenticatedPage fixture's post-test saveAuthState() write fails: the file on
+ * disk at that point still holds whatever the previous successful save left there, which - if a
+ * refresh happened during the test whose save just failed - can be an already-used refresh token.
+ * Leaving that in place risks the exact same replay-triggered family revocation this fixture
+ * exists to prevent; deleting it trades one extra login for that risk.
  */
-async function saveAuthState(page: Page, baseUrl: string, authPath: string, debug: boolean): Promise<void> {
+export function invalidateAuthState(authPath: string): void {
+  fs.rmSync(authPath, { force: true });
+}
+
+/**
+ * Save authentication state to file.
+ *
+ * Also called by the authenticatedPage fixture after every test: the @thunderid SDK
+ * transparently rotates the access/refresh token pair on a 401 or network error (see
+ * httpRequest() in @thunderid/browser), but only in that test's own page. Since a worker reuses
+ * one auth file across all its tests via a static addInitScript snapshot, a test that never
+ * re-saves after such a rotation leaves the file holding an already-used refresh token - the
+ * next test in that worker replays it, and the backend's reuse detection revokes the whole token
+ * family (RFC 9700 §4.14.2), 401ing every request for the rest of that worker's run.
+ */
+export async function saveAuthState(page: Page, baseUrl: string, authPath: string, debug: boolean): Promise<void> {
+  // Guard against persisting the wrong origin's storage. This is only meant to capture baseUrl's
+  // session, but a test that ends on a different origin (a social-login redirect, an IdP sign-in
+  // page, ...) would otherwise have this silently read and save THAT origin's storage under
+  // baseUrl's label, corrupting the file for the next test in this worker. Parse failures are
+  // treated the same as a mismatch: better to skip a save than risk writing the wrong thing.
+  const currentOrigin = safeOrigin(page.url());
+  const expectedOrigin = safeOrigin(baseUrl);
+  if (currentOrigin !== expectedOrigin) {
+    console.warn(
+      `⚠️ Skipping auth state save: page is on ${currentOrigin ?? "an unparseable URL"}, expected ${expectedOrigin}`
+    );
+    return;
+  }
+
   const context = page.context();
   const authDir = path.dirname(authPath);
 

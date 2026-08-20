@@ -109,15 +109,15 @@ class MyApp extends StatelessWidget {
 | `BaseSignIn(applicationId, onComplete, onError, builder)` | Builder variant; receives `SignInState` for custom form UI |
 | `SignUp(applicationId, onComplete, onError)` | Full embedded registration form |
 | `BaseSignUp(applicationId, onComplete, onError, builder)` | Builder variant for custom registration UI |
-| `ThunderIDUserProfile(onSaved, onError)` | Editable profile form; loads from `/scim2/Me` and saves via `updateUserProfile` |
-| `BaseThunderIDUserProfile(onSaved, onError, builder)` | Builder variant with full control over the form layout |
+| `UserProfile(onSaved, onError)` | Editable profile form; loads from `/scim2/Me` and saves via `updateUserProfile` |
+| `BaseUserProfile(onSaved, onError, builder)` | Builder variant with full control over the form layout |
 
 #### Guards
 
 | Widget | Description |
 |--------|-------------|
-| `ThunderIDSignedIn(child, fallback)` | Renders `child` only when the user is authenticated |
-| `ThunderIDSignedOut(child, fallback)` | Renders `child` only when the user is not authenticated |
+| `SignedIn(child, fallback)` | Renders `child` only when the user is authenticated |
+| `SignedOut(child, fallback)` | Renders `child` only when the user is not authenticated |
 
 #### State
 

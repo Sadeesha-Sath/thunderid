@@ -58,17 +58,17 @@ const sidebar: SidebarsConfig = {
             {
               type: 'doc',
               id: 'sdks/flutter/apis/components/signed-in',
-              label: 'ThunderIDSignedIn',
+              label: 'SignedIn',
             },
             {
               type: 'doc',
               id: 'sdks/flutter/apis/components/signed-out',
-              label: 'ThunderIDSignedOut',
+              label: 'SignedOut',
             },
             {
               type: 'doc',
               id: 'sdks/flutter/apis/components/user-profile',
-              label: 'ThunderIDUserProfile',
+              label: 'UserProfile',
             },
           ],
         },

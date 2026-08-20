@@ -1576,8 +1576,9 @@ components:
         includeActClaim:
           type: boolean
           description: >-
-            When true, access tokens issued through this client's authorization_code flow include
-            an implicit on-behalf-of `act` claim identifying the application.
+            When true, access tokens this client obtains for a user through the authorization_code
+            or CIBA grant include an implicit on-behalf-of `act` claim identifying the application.
+            Agent clients always include the claim, regardless of this setting.
           example: false
           default: false
         scopes:
@@ -1689,8 +1690,9 @@ components:
         includeActClaim:
           type: boolean
           description: >-
-            When true, access tokens issued through this client's authorization_code flow include
-            an implicit on-behalf-of `act` claim identifying the application.
+            When true, access tokens this client obtains for a user through the authorization_code
+            or CIBA grant include an implicit on-behalf-of `act` claim identifying the application.
+            Agent clients always include the claim, regardless of this setting.
           example: false
           default: false
         scopes:

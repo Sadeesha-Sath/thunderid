@@ -1372,6 +1372,28 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithOUDetail
 	suite.mockOUService.AssertNotCalled(suite.T(), "GetOrganizationUnit")
 }
 
+// TestResolveUserAttributes_RawJWT_BypassesRequestedAttributesAllowList verifies that an opaque
+// JWT/JWE returned by the identity system (the `_jwt` pseudo-claim) is passed through as the sole
+// result, even though it is never itself a requested attribute and requestedAttributes is empty.
+func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_RawJWT_BypassesRequestedAttributesAllowList() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		Context:     context.Background(),
+		RuntimeData: map[string]string{},
+	}
+
+	fetchedAttributes := map[string]interface{}{
+		providers.RawJWTAttributeKey: "header.payload.signature",
+	}
+
+	attrs, err := suite.executor.resolveUserAttributes(ctx, nil, fetchedAttributes, "user-123", "", "")
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), map[string]interface{}{
+		providers.RawJWTAttributeKey: "header.payload.signature",
+	}, attrs)
+}
+
 // ----- Execute with Attribute Cache: groups/userType/OU now go into cache -----
 
 func (suite *AuthAssertExecutorTestSuite) TestExecute_WithAttributeCache_GroupsIncludedInCache() {

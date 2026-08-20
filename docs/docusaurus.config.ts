@@ -236,6 +236,38 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     colorMode: {
       respectPrefersColorScheme: true,
     },
+    // Mermaid measures label widths with this font, so it must match the CSS
+    // theme in custom.css, otherwise labels get clipped. `base` keeps Mermaid's
+    // own styling minimal and lets custom.css drive the palette for both modes.
+    mermaid: {
+      theme: {light: 'base', dark: 'base'},
+      options: {
+        fontFamily: "'Plus Jakarta Sans', 'Inter', system-ui, sans-serif",
+        // More room between nodes and ranks so edge-label chips stop overlapping
+        // on wide fan-outs. Defaults are 50/50.
+        flowchart: {
+          nodeSpacing: 50,
+          rankSpacing: 46,
+          padding: 18,
+          // breathing room around subgraph titles so they don't hug the border
+          subGraphTitleMargin: {top: 12, bottom: 14},
+          // 'basis' (default) overshoots and looks loose; monotoneY gives clean,
+          // non-overshooting curves for a top-down flow.
+          curve: 'monotoneY',
+        },
+        sequence: {
+          // Notes carry request/code detail, render them monospace. Use the generic
+          // `monospace` keyword (NOT a web font or `ui-monospace`): Mermaid measures
+          // note width with this exact string, and `monospace` resolves identically
+          // for measurement and render, so the text can't overflow the box.
+          noteFontFamily: 'monospace',
+          noteFontSize: 12,
+          noteAlign: 'left',
+          // inner padding so the code text never touches the panel edge
+          noteMargin: 16,
+        },
+      },
+    },
     navbar: {
       title: '',
       logo: {

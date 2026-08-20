@@ -944,7 +944,25 @@ func (s *agentService) reconcileInboundForUpdate(ctx context.Context, agentID st
 		return inboundmodel.InboundClient{}, nil, nil
 	}
 
-	client := buildInboundClientRecord(agentID, req.AuthFlowID, req.RegistrationFlowID,
+	// Resolve flow handles to IDs when the direct IDs are absent, same as ValidateAgent does for
+	// create - a declarative update (e.g. a re-import) that only sets authFlowHandle must not wipe
+	// out the previously-resolved AuthFlowID.
+	profile := providers.InboundAuthProfile{
+		AuthFlowID:             req.AuthFlowID,
+		AuthFlowHandle:         req.AuthFlowHandle,
+		RegistrationFlowID:     req.RegistrationFlowID,
+		RegistrationFlowHandle: req.RegistrationFlowHandle,
+	}
+	if err := s.inboundClientService.ResolveInboundAuthProfileHandles(ctx, &profile); err != nil {
+		if svcErr := translateInboundClientFKError(err); svcErr != nil {
+			return inboundmodel.InboundClient{}, nil, svcErr
+		}
+		s.logger.Error(ctx, "Failed to resolve inbound auth profile handles",
+			log.Error(err), log.String("agentID", agentID))
+		return inboundmodel.InboundClient{}, nil, &tidcommon.InternalServerError
+	}
+
+	client := buildInboundClientRecord(agentID, profile.AuthFlowID, profile.RegistrationFlowID,
 		req.IsRegistrationFlowEnabled, req.ThemeID, req.LayoutID, req.Assertion,
 		req.LoginConsent, req.AllowedUserTypes, nil)
 	setLogoProperty(&client, req.LogoURL)
@@ -1159,7 +1177,9 @@ func updateNeedsInboundClient(req *model.UpdateAgentRequest) bool {
 		return false
 	}
 	return req.AuthFlowID != "" ||
+		req.AuthFlowHandle != "" ||
 		req.RegistrationFlowID != "" ||
+		req.RegistrationFlowHandle != "" ||
 		req.IsRegistrationFlowEnabled ||
 		req.ThemeID != "" ||
 		req.LayoutID != "" ||

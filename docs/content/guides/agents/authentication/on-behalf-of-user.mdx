@@ -86,6 +86,15 @@ The agent cannot open a browser for the user, so it requests approval over a bac
 
 The backchannel request and approval flow is the same as for any client. See [Backchannel Authentication (CIBA)](../../../protocols/oauth-oidc/backchannel-authentication), using this agent as the client.
 
+The token the agent polls out of the token endpoint names the user as `sub` and the agent as `act`, exactly as the sign-in path does:
+
+```json
+{
+  "sub": "<user-id>",
+  "act": { "sub": "<agent-id>" }
+}
+```
+
 </DelegationContent>
 
 <DelegationContent value="exchange">
@@ -156,7 +165,7 @@ A resource reads `sub` to apply the user's permissions and `act` to see which ag
 | `aud` | The resolved resource server, or the agent's default audience (its client ID when none is set) when the request carries no permission scopes or `resource`. |
 | `scope` | A subset of the user's scopes, never more than the user's own token held. |
 | `client_id` | The agent's client ID. |
-| `act` | The agent acting for the user, on the access token only and never the ID token. It is appended automatically on the `authorization_code` grant, and built from the `actor_token` on a token exchange. |
+| `act` | The agent acting for the user, on the access token only and never the ID token. It is appended automatically on the `authorization_code` and CIBA grants, and built from the `actor_token` on a token exchange. |
 | `exp`, `iat`, `nbf`, `jti` | Standard JWT lifetime and identity claims. |
 
 ## Troubleshooting

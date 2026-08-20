@@ -1207,6 +1207,88 @@ func (suite *AgentServiceTestSuite) TestUpdateAgent_FlowIDResolvedToDefault() {
 	assert.Equal(suite.T(), "default-reg-flow-id", resp.RegistrationFlowID)
 }
 
+func (suite *AgentServiceTestSuite) TestUpdateAgent_ResolvesAuthFlowHandle() {
+	svc, mockEntity, mockInbound, _, _ := suite.setupService()
+
+	agentEntity := buildAgentEntityFixture("old-name", "", "", "")
+	clearMockCalls(mockEntity, "GetEntity")
+	mockEntity.On("GetEntity", mock.Anything, testAgentID).Return(agentEntity, nil)
+
+	clearMockCalls(mockEntity, "UpdateEntity")
+	mockEntity.On("UpdateEntity", mock.Anything, testAgentID, mock.Anything).
+		Return(&providers.Entity{}, nil)
+
+	clearMockCalls(mockInbound, "GetInboundClientByEntityID")
+	mockInbound.On("GetInboundClientByEntityID", mock.Anything, mock.Anything).
+		Return(&inboundmodel.InboundClient{}, nil)
+
+	clearMockCalls(mockInbound, "ResolveInboundAuthProfileHandles")
+	mockInbound.On("ResolveInboundAuthProfileHandles", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			profile := args.Get(1).(*providers.InboundAuthProfile)
+			assert.Equal(suite.T(), "wayfinder-agent-auth-flow", profile.AuthFlowHandle)
+			profile.AuthFlowID = "resolved-auth-flow-id"
+		}).Return(nil)
+
+	var capturedAuthFlowID string
+	clearMockCalls(mockInbound, "UpdateInboundClient")
+	mockInbound.On("UpdateInboundClient",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			client := args.Get(1).(*inboundmodel.InboundClient)
+			capturedAuthFlowID = client.AuthFlowID
+		}).Return(nil)
+
+	resp, svcErr := svc.UpdateAgent(context.Background(), testAgentID, &model.UpdateAgentRequest{
+		Name: testAgentName,
+		Type: testAgentType,
+		InboundAuthProfileReq: inboundmodel.InboundAuthProfileReq{
+			AuthFlowHandle: "wayfinder-agent-auth-flow",
+		},
+	})
+	suite.Require().Nil(svcErr)
+	suite.Require().NotNil(resp)
+	assert.Equal(suite.T(), "resolved-auth-flow-id", capturedAuthFlowID)
+	assert.Equal(suite.T(), "resolved-auth-flow-id", resp.AuthFlowID)
+	mockInbound.AssertNotCalled(suite.T(), "DeleteInboundClient", mock.Anything, mock.Anything)
+}
+
+func (suite *AgentServiceTestSuite) TestUpdateAgent_ResolveHandlesFails_NonFKError() {
+	svc, mockEntity, mockInbound, _, _ := suite.setupService()
+
+	agentEntity := buildAgentEntityFixture("old-name", "", "", "")
+	clearMockCalls(mockEntity, "GetEntity")
+	mockEntity.On("GetEntity", mock.Anything, testAgentID).Return(agentEntity, nil)
+
+	clearMockCalls(mockInbound, "GetInboundClientByEntityID")
+	mockInbound.On("GetInboundClientByEntityID", mock.Anything, mock.Anything).
+		Return(&inboundmodel.InboundClient{}, nil)
+
+	clearMockCalls(mockInbound, "ResolveInboundAuthProfileHandles")
+	mockInbound.On("ResolveInboundAuthProfileHandles", mock.Anything, mock.Anything).
+		Return(errors.New("resolve boom"))
+
+	resp, svcErr := svc.UpdateAgent(context.Background(), testAgentID, &model.UpdateAgentRequest{
+		Name: testAgentName,
+		Type: testAgentType,
+		InboundAuthProfileReq: inboundmodel.InboundAuthProfileReq{
+			AuthFlowHandle: "wayfinder-agent-auth-flow",
+		},
+		InboundAuthConfig: []providers.InboundAuthConfigWithSecret{
+			{
+				Type: providers.OAuthInboundAuthType,
+				OAuthConfig: &providers.OAuthConfigWithSecret{
+					GrantTypes:              []providers.GrantType{providers.GrantTypeClientCredentials},
+					TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretBasic,
+				},
+			},
+		},
+	})
+	suite.Require().Nil(resp)
+	suite.Require().NotNil(svcErr)
+	assert.Equal(suite.T(), tidcommon.InternalServerError.Code, svcErr.Code)
+}
+
 // --- owner validation ---
 
 func (suite *AgentServiceTestSuite) TestValidateOwnerExists_Empty() {

@@ -4,6 +4,7 @@
 package thunderidengine
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -21,6 +22,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	systemconfig "github.com/thunder-id/thunderid/internal/system/config"
+	"github.com/thunder-id/thunderid/internal/system/cors"
 	joseconfig "github.com/thunder-id/thunderid/internal/system/jose/config"
 	"github.com/thunder-id/thunderid/internal/system/kmprovider"
 	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
@@ -43,6 +45,8 @@ import (
 	"github.com/thunder-id/thunderid/tests/mocks/resourceserverprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/runtimestoreprovidermock"
 )
+
+const testKeyID = "test-key"
 
 type EngineTestSuite struct {
 	suite.Suite
@@ -380,7 +384,7 @@ func (suite *EngineTestSuite) TestNew_HappyPath() {
 	t := suite.T()
 	tempDir := t.TempDir()
 
-	keyID := "test-key"
+	keyID := testKeyID
 	certPEM := generateSelfSignedCertFiles(t, tempDir, "cert.pem", "key.pem")
 	keyConfigs := []engineconfig.KeyConfig{{ID: keyID, CertFile: "cert.pem", KeyFile: "key.pem"}}
 
@@ -452,7 +456,7 @@ func (suite *EngineTestSuite) TestNew_InitializesRuntimeStoreWhenNotInjected() {
 	t := suite.T()
 	tempDir := t.TempDir()
 
-	keyID := "test-key"
+	keyID := testKeyID
 	certPEM := generateSelfSignedCertFiles(t, tempDir, "cert.pem", "key.pem")
 	keyConfigs := []engineconfig.KeyConfig{{ID: keyID, CertFile: "cert.pem", KeyFile: "key.pem"}}
 
@@ -523,4 +527,136 @@ func (suite *EngineTestSuite) TestWithCustomAuthnProvider_AccumulatesByName() {
 	assert.Equal(suite.T(), []string{"password"}, ctx.customAuthnProviders["acme"].Creds)
 	assert.Equal(suite.T(), []string{"otp"}, ctx.customAuthnProviders["beta"].Creds)
 	assert.NotNil(suite.T(), ctx.customAuthnProviders["acme"].Instance)
+}
+
+// mustMatch parses origin and reports whether matcher allows it.
+func mustMatch(t *testing.T, matcher *cors.Matcher, origin string) bool {
+	t.Helper()
+	parsed, err := cors.ParseOrigin(origin)
+	require.NoError(t, err)
+	allow, _ := matcher.Match(parsed)
+	return allow
+}
+
+func (suite *EngineTestSuite) TestBuildOriginReader() {
+	suite.T().Run("empty config returns nil reader", func(t *testing.T) {
+		reader, err := buildOriginReader(engineconfig.OriginConfig{})
+		require.NoError(t, err)
+		assert.Nil(t, reader)
+	})
+
+	suite.T().Run("valid config installs matching reader", func(t *testing.T) {
+		t.Cleanup(func() { cors.InitializeDynamicMatcher(nil) })
+
+		reader, err := buildOriginReader(engineconfig.OriginConfig{
+			AllowedOrigins: []engineconfig.OriginEntry{
+				{Origin: "https://app.example.com"},
+				{Regex: `^https://[a-z0-9-]+\.staging\.example\.com$`},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, reader)
+
+		cors.InitializeDynamicMatcher(reader)
+		matcher := cors.GetDynamicMatcher(context.Background())
+		require.NotNil(t, matcher)
+
+		assert.True(t, mustMatch(t, matcher, "https://app.example.com"))
+		assert.True(t, mustMatch(t, matcher, "https://foo.staging.example.com"))
+		assert.False(t, mustMatch(t, matcher, "https://other.example.com"))
+	})
+
+	suite.T().Run("wildcard literal is rejected", func(t *testing.T) {
+		reader, err := buildOriginReader(engineconfig.OriginConfig{
+			AllowedOrigins: []engineconfig.OriginEntry{{Origin: "*"}},
+		})
+		assert.Error(t, err)
+		assert.Nil(t, reader)
+	})
+
+	suite.T().Run("invalid regex is rejected", func(t *testing.T) {
+		reader, err := buildOriginReader(engineconfig.OriginConfig{
+			AllowedOrigins: []engineconfig.OriginEntry{{Regex: "["}},
+		})
+		assert.Error(t, err)
+		assert.Nil(t, reader)
+	})
+
+	suite.T().Run("origin and regex both set is rejected", func(t *testing.T) {
+		reader, err := buildOriginReader(engineconfig.OriginConfig{
+			AllowedOrigins: []engineconfig.OriginEntry{
+				{Origin: "https://app.example.com", Regex: "^https://.*$"},
+			},
+		})
+		assert.Error(t, err)
+		assert.Nil(t, reader)
+	})
+}
+
+// TestNew_ResetsDynamicMatcherWhenOriginConfigEmpty guards against a stale matcher from a
+// previous engine leaking into one that never called WithOriginConfig: without an explicit
+// reset, that engine would inherit the previous matcher's allowed origins instead of denying
+// all cross-origin requests.
+func (suite *EngineTestSuite) TestNew_ResetsDynamicMatcherWhenOriginConfigEmpty() {
+	t := suite.T()
+	t.Cleanup(func() { cors.InitializeDynamicMatcher(nil) })
+
+	newEngine := func(opts ...Option) *Engine {
+		tempDir := t.TempDir()
+		keyID := testKeyID
+		certPEM := generateSelfSignedCertFiles(t, tempDir, "cert.pem", "key.pem")
+		keyConfigs := []engineconfig.KeyConfig{{ID: keyID, CertFile: "cert.pem", KeyFile: "key.pem"}}
+
+		systemconfig.ResetServerRuntime()
+		t.Cleanup(systemconfig.ResetServerRuntime)
+		require.NoError(t, systemconfig.InitializeServerRuntime(tempDir, &systemconfig.Config{
+			GateClient: engineconfig.GateClientConfig{Hostname: "localhost", Port: 8080, Scheme: "https"},
+			Crypto: systemconfig.CryptoConfig{
+				Keys:       keyConfigs,
+				Encryption: engineconfig.EncryptionConfig{Key: "000102030405060708090a0b0c0d0e0f"},
+			},
+			Attestation: systemconfig.AttestationConfig{
+				Apple: systemconfig.AppleAttestationConfig{RootCertificate: string(certPEM)},
+			},
+		}))
+
+		baseOpts := []Option{
+			WithServerHome(tempDir),
+			WithServerConfig(engineconfig.ServerConfig{Identifier: "test-engine"}),
+			WithObservabilityProvider(newTestObservabilityProvider(t)),
+			WithAuthorizationProvider(newTestAuthzProvider(t)),
+			WithKeyConfigs(keyConfigs),
+			WithJWTConfig(engineconfig.JWTConfig{Issuer: "test-issuer", PreferredKeyID: keyID, ValidityPeriod: 3600}),
+			WithRuntimeStoreProvider(newTestRuntimeStoreProvider(t)),
+			WithRuntimeTransientDBType("memory"),
+			WithEncryptionConfig(engineconfig.EncryptionConfig{Key: "test-encryption-key"}),
+			WithGateClientConfig(engineconfig.GateClientConfig{Hostname: "localhost", Port: 8080, Scheme: "https"}),
+			WithCacheConfig(engineconfig.CacheConfig{Disabled: true}),
+			WithLogConfig(engineconfig.LogConfig{Level: "info", Format: "json"}),
+			WithIDPProvider(newTestIDPProvider(t)),
+			WithActorProvider(actorprovidermock.NewActorProviderMock(t)),
+			WithDefaultAuthnProvider(newTestDefaultAuthnProvider(t)),
+			WithResourceProvider(resourceserverprovidermock.NewResourceServerProviderMock(t)),
+			WithOUProvider(ouprovidermock.NewOrganizationUnitProviderMock(t)),
+			WithDesignResolveProvider(designprovidermock.NewDesignProviderMock(t)),
+			WithFlowProvider(flowexecmock.NewFlowProviderMock(t)),
+			WithI18nProvider(i18nprovidermock.NewI18nProviderMock(t)),
+			WithConsentProvider(consentprovidermock.NewConsentProviderMock(t)),
+			WithFlowConfig(engineconfig.FlowConfig{Executors: []string{"InviteExecutor", "PermissionValidator"}}),
+		}
+		return New(http.NewServeMux(), append(baseOpts, opts...)...)
+	}
+
+	eng := newEngine(WithOriginConfig(engineconfig.OriginConfig{
+		AllowedOrigins: []engineconfig.OriginEntry{{Origin: "https://app.example.com"}},
+	}))
+	require.NotNil(t, eng)
+	matcher := cors.GetDynamicMatcher(context.Background())
+	require.NotNil(t, matcher)
+	assert.True(t, mustMatch(t, matcher, "https://app.example.com"))
+
+	eng = newEngine()
+	require.NotNil(t, eng)
+	matcher = cors.GetDynamicMatcher(context.Background())
+	assert.Nil(t, matcher)
 }

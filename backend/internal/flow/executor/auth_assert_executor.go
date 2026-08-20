@@ -441,6 +441,12 @@ func (a *authAssertExecutor) resolveUserAttributes(
 	fetchedAttributes map[string]interface{},
 	userID, userType, ouID string,
 ) (map[string]interface{}, error) {
+	// An opaque JWT/JWE from the authn provider is passed through as-is, bypassing the
+	// requested-attributes allow-list: it isn't an individual claim to filter, it's the whole payload.
+	if rawJWT, ok := fetchedAttributes[providers.RawJWTAttributeKey]; ok {
+		return map[string]interface{}{providers.RawJWTAttributeKey: rawJWT}, nil
+	}
+
 	if len(requestedAttributes) == 0 {
 		return nil, nil
 	}

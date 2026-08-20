@@ -247,6 +247,11 @@ func FetchUserAttributes(
 
 	// Helper to check if a claim should be included
 	shouldInclude := func(claimName string) bool {
+		// An opaque JWT/JWE from the identity system is not a configured claim, so it is never
+		// gated by the allow-list.
+		if claimName == providers.RawJWTAttributeKey {
+			return true
+		}
 		if len(allowedClaims) == 0 {
 			return false // Only add special claims if explicitly allowed
 		}

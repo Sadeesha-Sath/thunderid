@@ -100,6 +100,15 @@ const defaultInputWidth = 76
 // --- bubbletea messages ---
 
 type healthCheckMsg struct{ ready bool }
+
+// logsTailMsg carries newly appended log lines discovered by a follow-mode tick.
+// ok is false on an I/O error reading the log; the offset is left unchanged in
+// that case so the next tick retries the same read.
+type logsTailMsg struct {
+	lines  []string
+	offset int64
+	ok     bool
+}
 type upgradeMsg struct{}
 type switchVersionMsg struct{}
 type thunderExitedMsg struct {
@@ -444,6 +453,29 @@ type ReplModel struct {
 	guideLabel    string // display label, e.g. "React"
 	guideDocURL   string // human-facing page, opened with 'o'
 	guideViewport viewport.Model
+
+	// Log follow mode — active while tailingLogs is true. tailLogOffset is the
+	// byte offset up to which the file has already been read and appended.
+	// tailLogLines holds the followed output separately from m.messages, capped
+	// at maxTailLogLines so a long-running or noisy log stream can't grow the
+	// REPL's rendered history — and the memory behind it — without bound.
+	tailingLogs   bool
+	tailLogPath   string
+	tailLogOffset int64
+	tailLogLines  []string
+}
+
+// maxTailLogLines bounds how many followed log lines are retained for
+// rendering at once. Older lines are dropped as new ones arrive.
+const maxTailLogLines = 500
+
+// appendTailLogLine records a followed log line, dropping the oldest once the
+// buffer exceeds maxTailLogLines.
+func (m *ReplModel) appendTailLogLine(line string) {
+	m.tailLogLines = append(m.tailLogLines, line)
+	if len(m.tailLogLines) > maxTailLogLines {
+		m.tailLogLines = m.tailLogLines[len(m.tailLogLines)-maxTailLogLines:]
+	}
 }
 
 // NewReplModel initializes the REPL model.
@@ -517,22 +549,9 @@ func NewReplModel(version string, proc *exec.Cmd, installPath string, verbose bo
 
 	logCmd := SlashCommand{
 		Name:        "/logs",
-		Description: "Show recent server logs",
+		Description: "Follow recent server logs (Esc to stop)",
 		Section:     "Server",
-		Action: func(_ string) ([]string, error) {
-			const maxLines = 30
-			logPath := setup.LogFile(installPath)
-			lines := setup.TailFile(logPath, maxLines)
-			if len(lines) == 0 {
-				return nil, fmt.Errorf("could not read logs at %s", logPath)
-			}
-			out := make([]string, 0, len(lines)+1)
-			out = append(out, Dim(fmt.Sprintf("── last %d lines of %s ──", len(lines), logPath)))
-			for _, l := range lines {
-				out = append(out, Dim(l))
-			}
-			return out, nil
-		},
+		Action:      nil, // handled specially in runCommand, like /stop
 	}
 	commands = append(commands, logCmd)
 	commands = append(commands, defaultCommands...)
@@ -681,13 +700,22 @@ func (m ReplModel) Init() tea.Cmd {
 		textinput.Blink,
 		m.spinner.Tick,
 		func() tea.Msg { return doHealthCheckOn(p) },
-		pollHealthCmdOn(p),
+		pollHealthCmdOn(p, healthPollFastInterval),
 		watchProcessCmd(m.proc),
 	)
 }
 
-func pollHealthCmdOn(port int) tea.Cmd {
-	return tea.Tick(time.Second, func(_ time.Time) tea.Msg {
+// healthPollFastInterval is used while waiting for the product to become
+// ready (or to recover), where sub-second responsiveness matters.
+const healthPollFastInterval = time.Second
+
+// healthPollSteadyInterval is used once the product is known to be ready.
+// Its only remaining purpose is crash detection, which doesn't need
+// sub-second granularity and shouldn't spam the access log with checks.
+const healthPollSteadyInterval = 5 * time.Second
+
+func pollHealthCmdOn(port int, interval time.Duration) tea.Cmd {
+	return tea.Tick(interval, func(_ time.Time) tea.Msg {
 		return doHealthCheckOn(port)
 	})
 }
@@ -792,11 +820,6 @@ func (m ReplModel) update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:cyclop,fu
 		// split), so this is the only reservation needed to fit within msg.Height.
 		m.guideViewport.SetWidth(msg.Width)
 		m.guideViewport.SetHeight(clamp(msg.Height-3, 5, 1000))
-
-	case tea.MouseWheelMsg:
-		var vpCmd tea.Cmd
-		m.body, vpCmd = m.body.Update(msg)
-		cmds = append(cmds, vpCmd)
 
 	// Bracketed paste arrives as its own message rather than as key presses, so the
 	// overlay inputs need it routed explicitly — the command input already receives
@@ -1009,6 +1032,13 @@ func (m ReplModel) update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:cyclop,fu
 				m.guideViewport, vpCmd = m.guideViewport.Update(msg)
 				cmds = append(cmds, vpCmd)
 			}
+		} else if m.tailingLogs {
+			// ── Log follow mode ──────────────────────────────────────────────────
+			if msg.String() == "esc" {
+				m.tailingLogs = false
+				m.input.Focus()
+				m.input.Placeholder = "Type / for commands, Ctrl+C to exit"
+			}
 		} else {
 			// ── Regular REPL ───────────────────────────────────────────────────
 			switch msg.String() {
@@ -1155,8 +1185,11 @@ func (m ReplModel) update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:cyclop,fu
 					m.input.Focus()
 				}
 			}
-			// Always keep polling so we can detect crashes via health check.
-			cmds = append(cmds, pollHealthCmdOn(m.effectivePort()))
+			// Ready is confirmed — back off to a slower cadence. Sub-second polling
+			// is only needed while waiting for the product to come up; once it has,
+			// polling every second forever just floods the access log with health
+			// checks for no added benefit to crash detection.
+			cmds = append(cmds, pollHealthCmdOn(m.effectivePort(), healthPollSteadyInterval))
 		} else {
 			// Only report "stopped responding" when the product was healthy and we
 			// are not deliberately restarting it for a try-* operation.
@@ -1167,8 +1200,19 @@ func (m ReplModel) update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:cyclop,fu
 				m.messages = append(m.messages, Red("✗")+" "+product.Name+" stopped responding.")
 			}
 			if m.status != statusStopped || m.tryingOut {
-				cmds = append(cmds, pollHealthCmdOn(m.effectivePort()))
+				cmds = append(cmds, pollHealthCmdOn(m.effectivePort(), healthPollFastInterval))
 			}
+		}
+
+	case logsTailMsg:
+		if m.tailingLogs {
+			if msg.ok {
+				for _, l := range msg.lines {
+					m.appendTailLogLine(l)
+				}
+				m.tailLogOffset = msg.offset
+			}
+			cmds = append(cmds, tailLogsTickCmd(m.tailLogPath, m.tailLogOffset))
 		}
 
 	case thunderExitedMsg:
@@ -1230,7 +1274,11 @@ func (m ReplModel) update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:cyclop,fu
 			m.status = statusStarting
 			m.input.Placeholder = "Starting " + product.Name + "..."
 		}
-		cmds = append(cmds, pollHealthCmdOn(m.effectivePort()))
+		pollInterval := healthPollFastInterval
+		if m.status == statusReady {
+			pollInterval = healthPollSteadyInterval
+		}
+		cmds = append(cmds, pollHealthCmdOn(m.effectivePort(), pollInterval))
 		m.messages = append(m.messages, Green("✓")+" "+msg.sampleName+" is live at "+Cyan(msg.sampleURL))
 		if msg.sampleName == "wayfinder" {
 			hasAI := false
@@ -1330,7 +1378,45 @@ func (m *ReplModel) updateCompletions() {
 	}
 }
 
+// tailLogsTickCmd schedules the next follow-mode read. It reads whatever was
+// appended to path since offset and reports back via logsTailMsg.
+func tailLogsTickCmd(path string, offset int64) tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(_ time.Time) tea.Msg {
+		lines, newOffset, ok := setup.TailFileFollow(path, offset)
+		return logsTailMsg{lines: lines, offset: newOffset, ok: ok}
+	})
+}
+
+// startLogTail prints the last 30 lines of the current log file and switches
+// the REPL into follow mode, appending new lines as they are written until
+// the user presses Esc.
+func (m *ReplModel) startLogTail() tea.Cmd {
+	logPath := setup.LatestLogFile(m.installPath)
+	lines, offset, ok := setup.TailFileFollow(logPath, 0)
+	if !ok {
+		m.messages = append(m.messages, Red("✗")+" could not read logs at "+logPath)
+		return nil
+	}
+	const maxLines = 30
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	m.messages = append(m.messages, Dim(fmt.Sprintf("── following %s (Esc to stop) ──", logPath)))
+	for _, l := range lines {
+		m.appendTailLogLine(l)
+	}
+	m.tailingLogs = true
+	m.tailLogPath = logPath
+	m.tailLogOffset = offset
+	m.input.Blur()
+	m.input.Placeholder = "Following logs — press Esc to stop"
+	return tailLogsTickCmd(logPath, offset)
+}
+
 func (m *ReplModel) runCommand(val string) tea.Cmd {
+	if val == "/logs" {
+		return m.startLogTail()
+	}
 	if val == "/stop" {
 		if err := m.stopThunderID(true); err != nil {
 			m.messages = append(m.messages, Red("✗")+" Could not stop "+product.Name+": "+err.Error())
@@ -1431,14 +1517,6 @@ type completionRow struct {
 	itemIndex int
 }
 
-// countLines returns the number of terminal rows a rendered block occupies.
-func countLines(s string) int {
-	if s == "" {
-		return 0
-	}
-	return strings.Count(s, "\n")
-}
-
 // renderCompletions draws the / command list, scrolling the window so the
 // selected item stays visible when the list is taller than the terminal.
 // available is the number of terminal rows left for this block (including
@@ -1449,7 +1527,29 @@ func renderCompletions(m ReplModel, available int) string {
 		return ""
 	}
 	const nameW = 24
-	var rows []completionRow
+	rows, selectedRow := buildCompletionRows(m, nameW)
+	window, start := completionWindow(rows, selectedRow, available)
+
+	var b strings.Builder
+	separator := Dim(strings.Repeat("─", BannerWidth()))
+	b.WriteString(separator + "\n")
+	if start > 0 {
+		b.WriteString("  " + Dim("↑ more above") + "\n")
+	}
+	for _, r := range window {
+		b.WriteString(r.text + "\n")
+	}
+	if start+len(window) < len(rows) {
+		b.WriteString("  " + Dim("↓ more below") + "\n")
+	}
+	b.WriteString(separator + "\n")
+	return b.String()
+}
+
+// buildCompletionRows expands m.completions into display rows, inserting section
+// headers and spacer rows between sections. Returns the rows and the index within
+// them of the currently selected command, for completionWindow to scroll around.
+func buildCompletionRows(m ReplModel, nameW int) (rows []completionRow, selectedRow int) {
 	lastSection := ""
 	for i, c := range m.completions {
 		if c.Section != lastSection {
@@ -1477,20 +1577,26 @@ func renderCompletions(m ReplModel, available int) string {
 		rows = append(rows, completionRow{text: "  " + indicator + namePart + "  " + descPart, itemIndex: i})
 	}
 
-	selectedRow := 0
 	for idx, r := range rows {
 		if r.itemIndex == m.selectedComp {
 			selectedRow = idx
 			break
 		}
 	}
+	return rows, selectedRow
+}
 
+// completionWindow returns the slice of rows that fits within available terminal
+// rows, scrolled so selectedRow stays visible, plus that slice's start index in
+// rows — the same start index renderCompletions needs to decide whether to draw
+// the "more above" indicator, and a click handler needs to map a clicked row back
+// to a command.
+func completionWindow(rows []completionRow, selectedRow, available int) (window []completionRow, start int) {
 	maxRows := clamp(available-2, minCompletionRows, len(rows))
 	if len(rows) > maxRows {
 		// Reserve room for the "more above"/"more below" indicator lines.
 		maxRows = clamp(maxRows-2, minCompletionRows, len(rows))
 	}
-	start := 0
 	if len(rows) > maxRows {
 		start = selectedRow - maxRows/2
 		if start < 0 {
@@ -1504,21 +1610,20 @@ func renderCompletions(m ReplModel, available int) string {
 	if end > len(rows) {
 		end = len(rows)
 	}
+	return rows[start:end], start
+}
 
-	var b strings.Builder
-	separator := Dim(strings.Repeat("─", BannerWidth()))
-	b.WriteString(separator + "\n")
-	if start > 0 {
-		b.WriteString("  " + Dim("↑ more above") + "\n")
+// completionsAvailable returns the terminal rows left for the / command dropdown
+// in whichever footer context is currently showing it. Both footer() (to render
+// it) and the mouse-click handler (to map a click back to a row) need this same
+// value, so it lives here once rather than as inline arithmetic in two places.
+func (m ReplModel) completionsAvailable() int {
+	if m.onboardingCmdMode {
+		// Reserve 3 rows below for the input line and the trailing hint.
+		return m.height - 3
 	}
-	for _, r := range rows[start:end] {
-		b.WriteString(r.text + "\n")
-	}
-	if end < len(rows) {
-		b.WriteString("  " + Dim("↓ more below") + "\n")
-	}
-	b.WriteString(separator + "\n")
-	return b.String()
+	// Reserve 2 rows below for the input/spinner line.
+	return m.height - 2
 }
 
 // renderNotice draws a standalone page for m.noticeMessage — used instead of
@@ -1648,9 +1753,13 @@ func (m ReplModel) credentialsBox() string {
 func (m ReplModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
-	// The output region scrolls, so the wheel has to reach it: the alternate screen
-	// has no scrollback of its own.
-	v.MouseMode = tea.MouseModeCellMotion
+	// Mouse reporting is deliberately left off (MouseModeNone, the zero value):
+	// enabling it captures every click and drag for the app, which blocks the
+	// terminal's own click-drag text selection unless the user holds a
+	// modifier key. Losing mouse-wheel scroll and click-to-select is the
+	// tradeoff for letting text (admin credentials, integration guides, etc.)
+	// be selected and copied normally. Scrolling remains available via
+	// PgUp/PgDn and shift+up/down (see scrollHint).
 	return v
 }
 
@@ -1677,9 +1786,13 @@ func (m ReplModel) render() string {
 	return m.body.View() + "\n" + footer
 }
 
-// bodyContent builds the scrollable region: the banner, server status and everything
-// the session has printed so far.
-func (m ReplModel) bodyContent() string {
+// bodyPreamble builds the banner, server status and credentials box shown at
+// the top of the scrollable region, before whatever mode-specific content
+// bodyContent appends after it. It is factored out so a click handler can
+// count exactly how many rows precede body content it needs to hit-test
+// (e.g. the onboarding list) without duplicating this logic and drifting out
+// of sync with what's actually rendered.
+func (m ReplModel) bodyPreamble() string {
 	var b strings.Builder
 
 	b.WriteString(BannerString(m.version) + "\n\n")
@@ -1704,6 +1817,14 @@ func (m ReplModel) bodyContent() string {
 		b.WriteString(box + "\n")
 	}
 	b.WriteString(Dim(strings.Repeat("─", BannerWidth())) + "\n\n")
+	return b.String()
+}
+
+// bodyContent builds the scrollable region: the banner, server status and everything
+// the session has printed so far.
+func (m ReplModel) bodyContent() string {
+	var b strings.Builder
+	b.WriteString(m.bodyPreamble())
 
 	if m.showNotice {
 		b.WriteString(renderNotice(m))
@@ -1741,6 +1862,13 @@ func (m ReplModel) bodyContent() string {
 		b.WriteString("\n")
 	}
 
+	for _, l := range m.tailLogLines {
+		b.WriteString("  " + Dim(l) + "\n")
+	}
+	if len(m.tailLogLines) > 0 {
+		b.WriteString("\n")
+	}
+
 	// The walkthrough carries its own navigation hints, so it scrolls with the output.
 	// The guide is rendered in the footer instead, since it scrolls in its own viewport.
 	if m.showWalkthrough {
@@ -1760,9 +1888,7 @@ func (m ReplModel) footer() string {
 
 	if m.showOnboarding && m.status == statusReady {
 		if m.onboardingCmdMode {
-			// Reserve 3 rows below for the input line and the trailing hint.
-			available := m.height - countLines(b.String()) - 3
-			b.WriteString(renderCompletions(m, available))
+			b.WriteString(renderCompletions(m, m.completionsAvailable()))
 			b.WriteString(m.input.View())
 			b.WriteString("\n\n" + Dim("  esc back to use-case picker"))
 		} else {
@@ -1811,9 +1937,7 @@ func (m ReplModel) footer() string {
 		return b.String()
 	}
 
-	// Reserve 2 rows below for the input/spinner line.
-	available := m.height - countLines(b.String()) - 2
-	b.WriteString(renderCompletions(m, available))
+	b.WriteString(renderCompletions(m, m.completionsAvailable()))
 
 	if m.status == statusStarting {
 		b.WriteString(m.spinner.View() + Dim(" Starting "+product.Name+"…"))
