@@ -28,7 +28,8 @@ var (
 	queryUpdateIdentityProviderByID = model.DBQuery{
 		ID: "IPQ-IDP_MGT-04",
 		Query: `UPDATE "IDP" SET NAME = $2, DESCRIPTION = $3, TYPE = $4, PROPERTIES = $5, ` +
-			`ATTRIBUTE_CONFIGURATION = $6 WHERE ID = $1 AND DEPLOYMENT_ID = $7`,
+			`ATTRIBUTE_CONFIGURATION = $6, UPDATED_AT = CURRENT_TIMESTAMP ` +
+			`WHERE ID = $1 AND DEPLOYMENT_ID = $7`,
 	}
 	// queryDeleteIdentityProviderByID is the query to delete a IdP by IdP ID.
 	queryDeleteIdentityProviderByID = model.DBQuery{

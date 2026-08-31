@@ -45,7 +45,8 @@ var (
 	queryUpdateResourceServer = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-05",
 		Query: `UPDATE "RESOURCE_SERVER"
-			SET OU_ID = $1, NAME = $2, DESCRIPTION = $3, IDENTIFIER = $4, TYPE = $5, PROPERTIES = $6
+			SET OU_ID = $1, NAME = $2, DESCRIPTION = $3, IDENTIFIER = $4, TYPE = $5, PROPERTIES = $6,
+			    UPDATED_AT = CURRENT_TIMESTAMP
 			WHERE ID = $7 AND DEPLOYMENT_ID = $8`,
 	}
 
@@ -173,7 +174,8 @@ var (
 		Query: `UPDATE "RESOURCE"
 		        SET NAME = $1,
 				    DESCRIPTION = $2,
-		            PROPERTIES = $3
+		            PROPERTIES = $3,
+		            UPDATED_AT = CURRENT_TIMESTAMP
 		        WHERE ID = $4
 		          AND RESOURCE_SERVER_ID = $5
 		          AND DEPLOYMENT_ID = $6`,
@@ -183,7 +185,7 @@ var (
 	queryUpdateResourcePermission = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-36",
 		Query: `UPDATE "RESOURCE"
-		        SET PERMISSION = $1
+		        SET PERMISSION = $1, UPDATED_AT = CURRENT_TIMESTAMP
 		        WHERE ID = $2
 		          AND RESOURCE_SERVER_ID = $3
 		          AND DEPLOYMENT_ID = $4`,
@@ -327,7 +329,7 @@ var (
 	queryUpdateAction = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-28",
 		Query: `UPDATE "ACTION"
-		        SET NAME = $1, DESCRIPTION = $2, PROPERTIES = $3
+		        SET NAME = $1, DESCRIPTION = $2, PROPERTIES = $3, UPDATED_AT = CURRENT_TIMESTAMP
 		        WHERE ID = $4
 		          AND RESOURCE_SERVER_ID = $5
 		          AND (RESOURCE_ID = $6 OR (RESOURCE_ID IS NULL AND $6 IS NULL))
@@ -338,7 +340,7 @@ var (
 	queryUpdateActionPermission = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-37",
 		Query: `UPDATE "ACTION"
-		        SET PERMISSION = $1
+		        SET PERMISSION = $1, UPDATED_AT = CURRENT_TIMESTAMP
 		        WHERE ID = $2
 		          AND RESOURCE_SERVER_ID = $3
 		          AND (RESOURCE_ID = $4 OR (RESOURCE_ID IS NULL AND $4 IS NULL))

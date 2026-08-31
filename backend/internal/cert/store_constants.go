@@ -26,13 +26,14 @@ var (
 	}
 	// queryUpdateCertificateByID updates a certificate based on its ID.
 	queryUpdateCertificateByID = dbmodel.DBQuery{
-		ID:    "CER_MGT-04",
-		Query: `UPDATE "CERTIFICATE" SET TYPE = $2, VALUE = $3 WHERE ID = $1 AND DEPLOYMENT_ID = $4`,
+		ID: "CER_MGT-04",
+		Query: `UPDATE "CERTIFICATE" SET TYPE = $2, VALUE = $3, UPDATED_AT = CURRENT_TIMESTAMP ` +
+			`WHERE ID = $1 AND DEPLOYMENT_ID = $4`,
 	}
 	// queryUpdateCertificateByReference updates a certificate based on its reference type and ID.
 	queryUpdateCertificateByReference = dbmodel.DBQuery{
 		ID: "CER_MGT-05",
-		Query: `UPDATE "CERTIFICATE" SET TYPE = $3, VALUE = $4 ` +
+		Query: `UPDATE "CERTIFICATE" SET TYPE = $3, VALUE = $4, UPDATED_AT = CURRENT_TIMESTAMP ` +
 			`WHERE REF_TYPE = $1 AND REF_ID = $2 AND DEPLOYMENT_ID = $5`,
 	}
 	// queryDeleteCertificateByID deletes a certificate by its ID.

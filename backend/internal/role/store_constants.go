@@ -39,8 +39,9 @@ var (
 
 	// queryUpdateRole updates a role.
 	queryUpdateRole = dbmodel.DBQuery{
-		ID:    "RLQ-ROLE_MGT-05",
-		Query: `UPDATE "ROLE" SET OU_ID = $1, NAME = $2, DESCRIPTION = $3 WHERE ID = $4 AND DEPLOYMENT_ID = $5`,
+		ID: "RLQ-ROLE_MGT-05",
+		Query: `UPDATE "ROLE" SET OU_ID = $1, NAME = $2, DESCRIPTION = $3, UPDATED_AT = CURRENT_TIMESTAMP ` +
+			`WHERE ID = $4 AND DEPLOYMENT_ID = $5`,
 	}
 
 	// queryDeleteRole deletes a role.
