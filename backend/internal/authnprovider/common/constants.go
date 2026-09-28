@@ -4,6 +4,8 @@
 // Package common defines shared constants for authentication providers.
 package common
 
+import "strings"
+
 const (
 	// UserAttributeUserID is the attribute key used to identify the user ID.
 	UserAttributeUserID = "userID"
@@ -47,6 +49,18 @@ const SystemAttrCredentialUpdatedAt = "credentialUpdatedAt" // #nosec G101 -- at
 // Server-owned, like SystemAttrCredentialUpdatedAt: it is preserved across wholesale system
 // attribute replacements and never surfaced through the user API.
 const SystemAttrLinkedIDs = "linkedIds"
+
+// IsReservedLinkingAttribute reports whether an attribute name must never appear in an
+// account-linking filter. userID resolves an entity by id, a filter holding federatedIdpId reads as
+// a federated token, and the entity lookup also matches system attributes, so a filter on any of
+// them would let the identity provider pick the account instead of naming one by its attributes.
+func IsReservedLinkingAttribute(name string) bool {
+	switch name {
+	case UserAttributeUserID, UserAttributeFederatedIdpID, SystemAttrCredentialUpdatedAt, SystemAttrLinkedIDs:
+		return true
+	}
+	return strings.HasPrefix(name, SystemAttrLinkedIDs+".")
+}
 
 // Credential type keys used in the credentials map passed to the authentication providers.
 const (

@@ -145,10 +145,12 @@ func (o *oidcAuthExecutor) ProcessAuthFlowResponse(ctx *providers.NodeContext,
 		return nil
 	}
 
+	returnedState := consumeFederatedCallbackInputs(ctx)
+
 	// Validate the OAuth state parameter to prevent CSRF attacks.
 	// State is validated only when the client sends it back. Clients that handle CSRF
 	// protection client-side (e.g., via sessionStorage) may omit it.
-	if returnedState, ok := ctx.UserInputs[userInputState]; ok && returnedState != "" {
+	if returnedState != "" {
 		expectedState := ctx.RuntimeData[common.RuntimeKeyOAuthState]
 		if returnedState != expectedState {
 			logger.Debug(ctx.Context, "OAuth state mismatch")

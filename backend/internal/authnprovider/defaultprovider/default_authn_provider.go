@@ -329,6 +329,38 @@ func (p *defaultAuthnProvider) LinkFederatedIdentity(ctx context.Context, entity
 	return nil
 }
 
+// resolveFederatedLink resolves the local user the recorded (connection, subject) link names,
+// returning an empty id when there is none yet.
+//
+// Nothing here writes, and nothing here matches on attributes: a recorded link is the only thing
+// that authenticates a federated sign-in outright. Finding a user by the connection's
+// account-linking attributes is the flow's job, because an attribute match names a user without
+// proving them.
+//
+// Two entities claiming one identity is a data integrity problem rather than a choice, so it fails
+// instead of falling through to "no user found", which would provision a duplicate.
+func (p *defaultAuthnProvider) resolveFederatedLink(ctx context.Context,
+	token map[string]interface{}) (string, *tidcommon.ServiceError) {
+	idpID, _ := token[authnprovidercm.UserAttributeFederatedIdpID].(string)
+	sub, _ := token[authnprovidercm.UserAttributeSub].(string)
+
+	linkedID, resolveErr := p.entitySvc.ResolveFederatedIdentity(ctx, idpID, sub)
+	switch {
+	case resolveErr == nil && linkedID != nil:
+		return *linkedID, nil
+	case errors.Is(resolveErr, entity.ErrAmbiguousEntity):
+		p.logger.Error(ctx, "Multiple entities are linked to the same federated subject",
+			log.String("idpId", idpID))
+		return "", newClientError(authnprovidercm.ErrorCodeAmbiguousUser,
+			"Ambiguous user", "Multiple users are linked to the provided federated identity")
+	case resolveErr != nil && !errors.Is(resolveErr, entity.ErrEntityNotFound):
+		return "", p.logAndReturnServerError(ctx, "Failed to resolve federated identity",
+			log.String("error", resolveErr.Error()))
+	}
+
+	return "", nil
+}
+
 func (p *defaultAuthnProvider) buildAuthnResult(
 	ctx context.Context, authnResult *authncommon.AuthnResult,
 ) (*providers.AuthnResult, *tidcommon.ServiceError) {
@@ -339,6 +371,20 @@ func (p *defaultAuthnProvider) buildAuthnResult(
 	entityID := ""
 	if idVal, ok := authnResult.Token[authnprovidercm.UserAttributeUserID]; ok {
 		entityID, _ = idVal.(string)
+	}
+	if entityID == "" && authnprovidercm.IsFederatedToken(authnResult.Token) {
+		resolvedID, svcErr := p.resolveFederatedLink(ctx, authnResult.Token)
+		if svcErr != nil {
+			return nil, svcErr
+		}
+		if resolvedID == "" {
+			// No local user for this identity yet. Hand the token back so the caller can provision
+			// and record the link.
+			result.EntityReferenceToken = authnResult.Token
+			result.AttributeToken = authnResult.Token
+			return result, nil
+		}
+		entityID = resolvedID
 	}
 	if entityID == "" {
 		identifiedEntityID, identifyErr := p.entitySvc.IdentifyEntity(ctx, authnResult.Token)
@@ -356,16 +402,31 @@ func (p *defaultAuthnProvider) buildAuthnResult(
 		entityID = *identifiedEntityID
 	}
 
+	res, svcErr := p.resultForEntity(ctx, entityID)
+	if svcErr != nil {
+		return nil, svcErr
+	}
+	res.AuthenticatedClaims = result.AuthenticatedClaims
+	return res, nil
+}
+
+// resultForEntity builds a resolved AuthnResult (entity reference and attributes) for an entity
+// that is known to exist.
+func (p *defaultAuthnProvider) resultForEntity(
+	ctx context.Context, entityID string,
+) (*providers.AuthnResult, *tidcommon.ServiceError) {
 	entityResult, getErr := p.entitySvc.GetEntity(ctx, entityID)
 	if getErr != nil {
 		return nil, p.logAndReturnServerError(ctx, "Failed to get entity after authentication",
 			log.String("error", getErr.Error()))
 	}
-	result.EntityReference = &providers.EntityReference{
-		EntityID:       entityResult.ID,
-		EntityCategory: string(entityResult.Category),
-		EntityType:     entityResult.Type,
-		OUID:           entityResult.OUID,
+	result := &providers.AuthnResult{
+		EntityReference: &providers.EntityReference{
+			EntityID:       entityResult.ID,
+			EntityCategory: string(entityResult.Category),
+			EntityType:     entityResult.Type,
+			OUID:           entityResult.OUID,
+		},
 	}
 	attributes := make(map[string]interface{})
 	if len(entityResult.Attributes) > 0 {
@@ -374,7 +435,6 @@ func (p *defaultAuthnProvider) buildAuthnResult(
 		}
 	}
 	result.Attributes = buildAttributesResponse(attributes)
-
 	return result, nil
 }
 
@@ -389,6 +449,12 @@ func (p *defaultAuthnProvider) resolveEntityFromToken(
 	entityID := ""
 	if idVal, ok := token[authnprovidercm.UserAttributeUserID]; ok {
 		entityID, _ = idVal.(string)
+	}
+	if entityID == "" && authnprovidercm.IsFederatedToken(token) {
+		// A federated token that reached here already went through resolution and found nothing.
+		// Re-resolving cannot help, and IdentifyEntity would scan for keys no index can answer.
+		return nil, newClientError(authnprovidercm.ErrorCodeUserNotFound,
+			"User not found", "No user found matching the provided "+tokenLabel)
 	}
 	if entityID == "" {
 		identifiedEntityID, identifyErr := p.entitySvc.IdentifyEntity(ctx, token)
