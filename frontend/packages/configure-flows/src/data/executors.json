@@ -1185,5 +1185,26 @@
         "onFailure": ""
       }
     }
+  },
+  {
+    "resourceType": "STEP",
+    "category": "EXECUTOR",
+    "type": "TASK_EXECUTION",
+    "display": {
+      "header": "Linking Executor",
+      "label": "Account Linking",
+      "description": "Decide whether this federated identity is new, already signed in, or needs the account verified first",
+      "image": "assets/images/icons/magnifying-glass.svg",
+      "showOnResourcePanel": true
+    },
+    "data": {
+      "action": {
+        "type": "EXECUTOR",
+        "executor": {"name": "LinkingExecutor"},
+        "onSuccess": "",
+        "onFailure": "",
+        "onIncomplete": ""
+      }
+    }
   }
 ]

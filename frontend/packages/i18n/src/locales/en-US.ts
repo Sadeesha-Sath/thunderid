@@ -3775,16 +3775,22 @@ const translations = {
     'core.executions.httpRequest.method.label': 'Method',
     'core.executions.httpRequest.method.placeholder': 'Select HTTP method',
     'core.executions.httpRequest.headers.label': 'Headers',
+    'core.executions.httpRequest.headers.keyLabel': 'Name',
+    'core.executions.httpRequest.headers.valueLabel': 'Value',
     'core.executions.httpRequest.headers.keyPlaceholder': 'Header name',
     'core.executions.httpRequest.headers.valuePlaceholder': 'Header value',
+    'core.executions.httpRequest.headers.addLabel': 'Add Header',
     'core.executions.httpRequest.body.label': 'Request Body',
     'core.executions.httpRequest.body.placeholder': 'Enter JSON request body',
     'core.executions.httpRequest.timeout.label': 'Timeout (seconds)',
     'core.executions.httpRequest.timeout.placeholder': '10',
     'core.executions.httpRequest.timeout.hint': 'Request timeout in seconds (max 20).',
     'core.executions.httpRequest.responseMapping.label': 'Response Mapping',
+    'core.executions.httpRequest.responseMapping.keyLabel': 'Runtime data key',
+    'core.executions.httpRequest.responseMapping.valueLabel': 'Response path',
     'core.executions.httpRequest.responseMapping.keyPlaceholder': 'Runtime data key',
     'core.executions.httpRequest.responseMapping.valuePlaceholder': 'Response path (e.g., data.userId)',
+    'core.executions.httpRequest.responseMapping.addLabel': 'Add Mapping',
     'core.executions.httpRequest.errorHandling.label': 'Error Handling',
     'core.executions.httpRequest.errorHandling.failOnError.label': 'Fail on Error',
     'core.executions.httpRequest.errorHandling.retryCount.label': 'Retry Count',
@@ -3918,6 +3924,12 @@ const translations = {
       'Sign-out button <code>{{id}}</code> is not connected, so it will not sign the user out. Connect it to the session sign-out step, or change its action.',
     'core.validation.signOut.confirmInvalidTarget':
       'Sign-out button <code>{{id}}</code> does not lead to a session sign-out step, so it will not sign the user out. Connect it to one, or change its action.',
+
+    // Validation messages - account linking
+    'core.validation.linking.rejectNotConnected':
+      'Reject button <code>{{id}}</code> is not connected, so the account linking step will never see the refusal. Connect it to that step, or change its action.',
+    'core.validation.linking.rejectInvalidTarget':
+      'Reject button <code>{{id}}</code> does not lead back to the account linking step, so that step will never see the refusal. Connect it to the linking step, or change its action.',
 
     // Validation messages - rich text links
     'core.validation.richText.actionNotConnected':
@@ -4172,6 +4184,7 @@ const translations = {
     'core.buttonExtendedProperties.action.submit': 'Submit Form',
     'core.buttonExtendedProperties.action.trigger': 'Trigger Action',
     'core.buttonExtendedProperties.action.confirm': 'Confirm Action',
+    'core.buttonExtendedProperties.action.reject': 'Reject Action',
     'core.buttonExtendedProperties.action.hint': 'What happens when the button is activated',
     'core.buttonExtendedProperties.startIcon.label': 'Start Icon',
     'core.buttonExtendedProperties.startIcon.placeholder': 'Enter icon path (e.g., assets/images/icons/icon.svg)',
