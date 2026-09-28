@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	dbmodel "github.com/thunder-id/thunderid/internal/system/database/model"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
@@ -34,9 +35,11 @@ type entityStoreInterface interface {
 	UpdateSystemCredentials(ctx context.Context, entityID string,
 		creds json.RawMessage) error
 	DeleteEntity(ctx context.Context, id string) error
+	LockEntity(ctx context.Context, id string) error
 
 	// Query
 	IdentifyEntity(ctx context.Context, filters map[string]interface{}) (*string, error)
+	ResolveFederatedIdentity(ctx context.Context, idpID, sub string) (*string, error)
 	SearchEntities(ctx context.Context, filters map[string]interface{}) ([]providers.Entity, error)
 	GetEntityListCount(ctx context.Context, category string,
 		filters map[string]interface{}) (int, error)
@@ -504,6 +507,52 @@ func (es *entityDBStore) IdentifyEntity(ctx context.Context,
 	return &entityID, nil
 }
 
+// LockEntity holds the entity's write lock until the surrounding transaction ends.
+func (es *entityDBStore) LockEntity(ctx context.Context, id string) error {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
+	if err != nil {
+		return fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	rowsAffected, err := dbClient.ExecuteContext(ctx, QueryLockEntity, id, es.scope(ctx))
+	if err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrEntityNotFound
+	}
+	return nil
+}
+
+// ResolveFederatedIdentity resolves the entity linked to a federated subject at a connection. It
+// reads the identifier index only, so a miss is a definitive "not linked yet" rather than a reason
+// to scan attributes.
+func (es *entityDBStore) ResolveFederatedIdentity(ctx context.Context, idpID, sub string) (*string, error) {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	results, err := dbClient.QueryContext(ctx, QueryResolveIdentifier,
+		linkedIdentifierName(idpID), sub, identifierSourceSystem, es.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	if len(results) == 0 {
+		return nil, ErrEntityNotFound
+	}
+	if len(results) > 1 {
+		return nil, ErrAmbiguousEntity
+	}
+
+	entityID, ok := results[0]["id"].(string)
+	if !ok || entityID == "" {
+		return nil, fmt.Errorf("unexpected type for id: %T", results[0]["id"])
+	}
+	return &entityID, nil
+}
+
 // SearchEntities searches for all entities matching the provided filters.
 // Unlike IdentifyEntity, this returns all matching entities instead of erroring on ambiguity.
 // Results are capped at MaxPageSize (100) entries; matches beyond that limit are not returned.
@@ -920,15 +969,68 @@ func executeCountQuery(dbClient provider.DBClientInterface, ctx context.Context,
 	return totalCount, nil
 }
 
+const (
+	// identifierSourceSystem marks an ENTITY_IDENTIFIER row derived from system attributes.
+	identifierSourceSystem = "system"
+	// identifierSourceAttribute marks an ENTITY_IDENTIFIER row derived from schema attributes.
+	identifierSourceAttribute = "attribute"
+)
+
+// indexedAttr is one row destined for ENTITY_IDENTIFIER.
+type indexedAttr struct {
+	name   string
+	value  string
+	source string
+}
+
+// linkedIdentifierName derives the ENTITY_IDENTIFIER name a connection's links are indexed
+// under. The subject is not part of the name: it is the row's VALUE, and one name can carry
+// several values, so a connection's subjects share the name and each keeps its own row. That also
+// keeps the name within NAME's 255 characters whatever the connection emits, since OIDC permits a
+// 255-character subject on its own. Keeping the connection ID in the name leaves links enumerable
+// per connection, which is what a future unlink on connection deletion needs.
+//
+// This is the single derivation for both the write and the read path; a second copy anywhere is how
+// links come to be written successfully and never resolve.
+func linkedIdentifierName(idpID string) string {
+	return fmt.Sprintf("%s.%s", authnprovidercm.SystemAttrLinkedIDs, idpID)
+}
+
+// federatedIdentifierRows converts the linkedIds system attribute into one indexed identifier per
+// link. The value is shaped {"<idpId>": {"<sub>": {}}}, so a connection can hold several subjects
+// and each gets its own row under the connection's name. The per-link object is not indexed. Entries that do not match are skipped rather
+// than failing the write, since the blob is server-owned and a malformed entry should not block an
+// unrelated attribute update.
+func federatedIdentifierRows(value interface{}) []indexedAttr {
+	byIDP, ok := value.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	var rows []indexedAttr
+	for idpID, subjects := range byIDP {
+		bySub, ok := subjects.(map[string]interface{})
+		if idpID == "" || !ok {
+			continue
+		}
+		for sub := range bySub {
+			if sub == "" {
+				continue
+			}
+			rows = append(rows, indexedAttr{
+				name:   linkedIdentifierName(idpID),
+				value:  sub,
+				source: identifierSourceSystem,
+			})
+		}
+	}
+	return rows
+}
+
 func prepareIdentifierQuery(
 	entityID string, attributes json.RawMessage, systemAttributes json.RawMessage,
 	indexedAttrs map[string]bool, deploymentID string,
 ) (*dbmodel.DBQuery, []interface{}, error) {
-	type indexedAttr struct {
-		name   string
-		value  string
-		source string
-	}
 	var attrEntries, sysEntries []indexedAttr
 
 	// Extract indexed attributes from schema attributes (source = "attribute").
@@ -946,7 +1048,8 @@ func prepareIdentifierQuery(
 				continue
 			}
 			for _, valueStr := range attrValueToStrings(attrValue) {
-				attrEntries = append(attrEntries, indexedAttr{name: attrName, value: valueStr, source: "attribute"})
+				attrEntries = append(attrEntries,
+					indexedAttr{name: attrName, value: valueStr, source: identifierSourceAttribute})
 			}
 		}
 	}
@@ -962,6 +1065,15 @@ func prepareIdentifierQuery(
 			return nil, nil, err
 		}
 		for attrName, attrValue := range sysAttrMap {
+			// Federated links are server-owned and indexed unconditionally. Gating them on
+			// user.indexed_attributes would let a missing config line silently break federated login.
+			if attrName == authnprovidercm.SystemAttrLinkedIDs {
+				for _, row := range federatedIdentifierRows(attrValue) {
+					sysNames[row.name] = true
+					sysEntries = append(sysEntries, row)
+				}
+				continue
+			}
 			if !indexedAttrs[attrName] {
 				continue
 			}
@@ -970,7 +1082,8 @@ func prepareIdentifierQuery(
 				sysNames[attrName] = true
 			}
 			for _, valueStr := range values {
-				sysEntries = append(sysEntries, indexedAttr{name: attrName, value: valueStr, source: "system"})
+				sysEntries = append(sysEntries,
+					indexedAttr{name: attrName, value: valueStr, source: identifierSourceSystem})
 			}
 		}
 	}
