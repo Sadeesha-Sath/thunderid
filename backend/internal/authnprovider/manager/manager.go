@@ -104,69 +104,6 @@ func (m *authnProviderManager) AuthenticateUser(ctx context.Context, identifiers
 		return authUser, nil, &ErrorAuthenticationFailed
 	}
 
-	if sub, ok := credentials[authnprovidercm.UserAttributeSub]; ok {
-		// Temporary handling of disambiguation after a federated authentication step.
-		// Only works with Thunder's default authn provider.
-		if subStr, ok := sub.(string); !ok || subStr == "" {
-			m.logger.Debug(ctx, "disambiguation requested but sub is missing or invalid in credentials")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-
-		if !authUser.IsAuthenticated() {
-			m.logger.Debug(ctx, "disambiguation requested but current user is not authenticated")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-
-		authUserState, ok := authUser.StateFor(defaultProviderName)
-		if !ok {
-			m.logger.Debug(ctx, "disambiguation requested but current user has no state for the default provider")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-
-		if authUserState.EntityReferenceToken == nil {
-			m.logger.Debug(ctx, "disambiguation requested but current user's entity reference token is missing")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-
-		entityRefToken, ok := authUserState.EntityReferenceToken.(map[string]interface{})
-		if !ok || entityRefToken == nil {
-			m.logger.Debug(ctx,
-				"disambiguation requested but current user's entity reference token is missing or invalid")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-
-		subClaim, ok := entityRefToken[authnprovidercm.UserAttributeSub]
-		if !ok {
-			m.logger.Debug(ctx,
-				"disambiguation requested but current user's entity reference token is missing sub claim")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-
-		if systemutils.ConvertInterfaceValueToString(subClaim) !=
-			systemutils.ConvertInterfaceValueToString(sub) {
-			m.logger.Debug(ctx, "disambiguation requested but sub claim in credentials "+
-				"does not match current user's sub claim")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-
-		val, ok := identifiers[authnprovidercm.UserAttributeUserID]
-		if !ok {
-			m.logger.Debug(ctx, "disambiguation requested but userID is missing or invalid in identifiers")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-		valStr, ok := val.(string)
-		if !ok || valStr == "" {
-			m.logger.Debug(ctx, "disambiguation requested but userID is missing or invalid in identifiers")
-			return authUser, nil, &ErrorAuthenticationFailed
-		}
-		userIDToken := map[string]interface{}{authnprovidercm.UserAttributeUserID: valStr}
-		authUser.SetStateFor(defaultProviderName, providers.AuthState{
-			EntityReferenceToken: userIDToken,
-			AttributeToken:       userIDToken,
-		})
-		return authUser, nil, nil
-	}
-
 	selectedProviderName, selectedProvider, svcErr := m.selectProvider(ctx, slices.Sorted(maps.Keys(credentials)))
 	if svcErr != nil {
 		return authUser, nil, svcErr
@@ -178,6 +115,14 @@ func (m *authnProviderManager) AuthenticateUser(ctx context.Context, identifiers
 			m.logger.Error(ctx, "provider returned server error during authentication",
 				log.String("error", svcErr.ErrorDescription.DefaultValue))
 			return authUser, nil, &tidcommon.InternalServerError
+		}
+		if _, federated := credentials[authnprovidercm.CredentialTypeFederated]; federated &&
+			svcErr.Code == authnprovidercm.ErrorCodeAmbiguousUser {
+			// Two entities hold the recorded link. Reported as such so the caller does not read it as
+			// a failed exchange with the connection.
+			m.logger.Debug(ctx, "federated authentication resolved an ambiguous link",
+				log.String("errorDescription", svcErr.ErrorDescription.DefaultValue))
+			return authUser, nil, &ErrorAmbiguousUser
 		}
 		switch svcErr.Code {
 		case authnprovidercm.ErrorCodeUserNotFound:

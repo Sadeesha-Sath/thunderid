@@ -108,6 +108,9 @@ type UserMgtProvider interface {
 	// CreateUser provisions a user and returns it with its generated ID. Errors from the user
 	// service are returned unchanged so callers can distinguish the actual failure.
 	CreateUser(ctx context.Context, user *User) (*User, *common.ServiceError)
+	// DeleteUser removes a user the runtime provisioned, together with what the user service
+	// deletes alongside it.
+	DeleteUser(ctx context.Context, userID string) *common.ServiceError
 }
 
 // I18nProvider defines the interface for the i18n provider.

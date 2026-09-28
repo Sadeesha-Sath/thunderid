@@ -249,6 +249,14 @@ func isCrossOUProvisioningAllowed(ctx *providers.NodeContext) bool {
 func setFederatedEntityState(ctx context.Context, execResp *providers.ExecutorResponse,
 	authnProvider providers.AuthnProviderManager) {
 	execResp.RuntimeData[common.RuntimeKeyEntityState] = entityStateNotExists
+
+	// An AuthUser with a side missing names nobody. GetEntityReference treats being asked in that
+	// state as a fault, logging an error that reads as a bug rather than the ordinary outcome it is
+	// here, so only ask when there is something to resolve.
+	if !execResp.AuthUser.IsAuthenticated() {
+		return
+	}
+
 	authUser, entityRef, svcErr := authnProvider.GetEntityReference(ctx, execResp.AuthUser)
 	execResp.AuthUser = authUser
 	if svcErr == nil && entityRef != nil {
@@ -344,4 +352,16 @@ func validateFederatedIdentifierConsistency(ctx *providers.NodeContext, idpID st
 	}
 
 	return true
+}
+
+// consumeFederatedCallbackInputs takes the authorization code and state off the context and returns
+// the state, so the caller can still validate it. UserInputs persist for the whole execution, so a
+// code left behind is read by the next federated node as its own: that node skips its redirect and
+// exchanges this connection's code at its own token endpoint. A linking node that sends a candidate
+// to verification forwards to exactly such a node.
+func consumeFederatedCallbackInputs(ctx *providers.NodeContext) string {
+	returnedState := ctx.UserInputs[userInputState]
+	delete(ctx.UserInputs, userInputCode)
+	delete(ctx.UserInputs, userInputState)
+	return returnedState
 }
