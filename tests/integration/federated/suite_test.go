@@ -61,7 +61,6 @@ var fedPersonType = testutils.UserType{
 		"lastName":   map[string]interface{}{"type": "string"},
 		"city":       map[string]interface{}{"type": "string"},
 		"costCenter": map[string]interface{}{"type": "string"},
-		"sub":        map[string]interface{}{"type": "string"},
 		// Optional, and only the OTP linking scenario sets it, to prove an account with.
 		"mobile_number": map[string]interface{}{"type": "string"},
 		// Optional, and only the linking scenarios set it: proving a matched account needs something
@@ -83,7 +82,6 @@ var fedContractorType = testutils.UserType{
 		"email":          map[string]interface{}{"type": "string", "required": true, "unique": true},
 		"firstName":      map[string]interface{}{"type": "string"},
 		"employeeNumber": map[string]interface{}{"type": "string"},
-		"sub":            map[string]interface{}{"type": "string"},
 	},
 }
 
@@ -873,6 +871,17 @@ func (s *FederatedMappingSuite) nextSubject() string {
 func (s *FederatedMappingSuite) register(
 	config *testutils.AttributeConfiguration, user *testutils.OIDCUserInfo) map[string]interface{} {
 	s.T().Helper()
+	var attributes map[string]interface{}
+	s.Require().NoError(json.Unmarshal(s.registerEntity(config, user).Attributes, &attributes),
+		"failed to decode the provisioned user's attributes")
+	return attributes
+}
+
+// registerEntity drives the registration flow like register, and returns the user the flow's
+// assertion was issued for.
+func (s *FederatedMappingSuite) registerEntity(
+	config *testutils.AttributeConfiguration, user *testutils.OIDCUserInfo) *testutils.User {
+	s.T().Helper()
 	s.applyConfig(config)
 	s.mockOIDC.AddUser(user)
 	s.activeSub = user.Sub
@@ -891,15 +900,10 @@ func (s *FederatedMappingSuite) register(
 	s.Require().Equal("COMPLETE", completed.FlowStatus,
 		"expected the flow to complete, got %+v", completed)
 
-	provisioned, err := testutils.FindUserByAttribute("sub", user.Sub)
-	s.Require().NoError(err, "failed to look up the provisioned user")
-	s.Require().NotNil(provisioned, "no user was provisioned for subject %s", user.Sub)
+	provisioned, err := testutils.GetUserFromAssertion(completed.Assertion)
+	s.Require().NoError(err, "failed to look up the user provisioned for subject %s", user.Sub)
 	s.config.CreatedUserIDs = append(s.config.CreatedUserIDs, provisioned.ID)
-
-	var attributes map[string]interface{}
-	s.Require().NoError(json.Unmarshal(provisioned.Attributes, &attributes),
-		"failed to decode the provisioned user's attributes")
-	return attributes
+	return provisioned
 }
 
 // registerExpectingPrompt drives the flow for a configuration under which no mapping supplies a

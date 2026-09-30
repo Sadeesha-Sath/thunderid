@@ -57,9 +57,8 @@ func (s *FederatedMappingSuite) TestAuthenticationFlowWithoutLocalUserProceedsWh
 	s.Require().Equal("COMPLETE", step.FlowStatus,
 		"the identity should have been provisioned just in time, got %+v", step)
 
-	provisioned, err := testutils.FindUserByAttribute("sub", user.Sub)
-	s.Require().NoError(err, "failed to look up the provisioned user")
-	s.Require().NotNil(provisioned, "the allowance should have provisioned a user for %s", user.Sub)
+	provisioned, err := testutils.GetUserFromAssertion(step.Assertion)
+	s.Require().NoError(err, "the allowance should have provisioned a user for %s", user.Sub)
 	s.config.CreatedUserIDs = append(s.config.CreatedUserIDs, provisioned.ID)
 }
 
@@ -80,7 +79,7 @@ func (s *FederatedMappingSuite) TestAuthenticationFlowWithoutLocalUserFailsWhenN
 	s.Require().NotNil(step.Error, "expected the terminal step to carry its error, got %+v", step)
 	s.Equal("FET-1002", step.Error.Code, "expected the client error for an unidentifiable user, got %+v", step.Error)
 
-	unexpected, lookupErr := testutils.FindUserByAttribute("sub", user.Sub)
+	unexpected, lookupErr := testutils.FindUserByAttribute("email", user.Email)
 	s.Require().NoError(lookupErr, "failed to check whether a user was created")
 	s.Nil(unexpected, "no user should be created when the flow does not allow authentication without one")
 }
