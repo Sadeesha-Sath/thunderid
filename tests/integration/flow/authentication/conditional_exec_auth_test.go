@@ -117,9 +117,6 @@ var (
 				"type":       "string",
 				"credential": true,
 			},
-			"sub": map[string]interface{}{
-				"type": "string",
-			},
 			"email": map[string]interface{}{
 				"type": "string",
 			},
@@ -218,7 +215,6 @@ func (ts *ConditionalExecAuthFlowTestSuite) SetupSuite() {
 	existingUserAttributes := map[string]interface{}{
 		"username":   "existingconditionalexecuser",
 		"password":   "Test@1234",
-		"sub":        conditionalExecExistingUserSub,
 		"email":      conditionalExecExistingUserEmail,
 		"givenName":  "Existing",
 		"familyName": "User",
@@ -443,7 +439,7 @@ func (ts *ConditionalExecAuthFlowTestSuite) TestExecuteConditionalNodes() {
 	ts.Require().NotEmpty(flowStep.Assertion, "Assertion token should be present")
 
 	// Find the created user to get their details
-	user, err := testutils.FindUserByAttribute("sub", conditionalExecNewUserSub)
+	user, err := testutils.GetUserFromAssertion(flowStep.Assertion)
 	ts.Require().NoError(err, "Failed to find created user")
 	ts.Require().NotNil(user, "User should be found after provisioning")
 

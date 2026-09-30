@@ -89,9 +89,6 @@ var googleEntityType = testutils.UserType{
 			"type":       "string",
 			"credential": true,
 		},
-		"sub": map[string]interface{}{
-			"type": "string",
-		},
 		"email": map[string]interface{}{
 			"type": "string",
 		},
@@ -175,7 +172,6 @@ func (ts *GoogleAuthFlowTestSuite) SetupSuite() {
 	userAttributes := map[string]interface{}{
 		"username":   "googleflowuser",
 		"password":   "Test@1234",
-		"sub":        "google-test-user-123",
 		"email":      "testuser@gmail.com",
 		"givenName":  "Test",
 		"familyName": "User",
