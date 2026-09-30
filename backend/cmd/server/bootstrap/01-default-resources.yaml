@@ -38,10 +38,6 @@ schema:
     type: string
     displayName: Mobile Number
     required: false
-  sub:
-    type: string
-    displayName: Subject
-    required: false
   name:
     type: string
     displayName: Full Name
@@ -5644,7 +5640,6 @@ type: person
 ouHandle: default
 attributes:
   username: "{{ .ADMIN_USERNAME }}"
-  sub: "{{ .ADMIN_USERNAME }}"
   email: admin@example.com
   name: Administrator
   given_name: Admin
