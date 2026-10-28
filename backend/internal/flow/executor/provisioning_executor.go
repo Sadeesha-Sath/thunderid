@@ -193,16 +193,9 @@ func (p *provisioningExecutor) Execute(ctx *providers.NodeContext) (*providers.E
 		log.MaskedString(log.LoggerKeyUserID, createdEntity.ID))
 
 	// Assign user to groups and roles
-	if err := p.assignGroupsAndRoles(ctx, createdEntity.ID); err != nil {
-		logger.Error(ctx.Context, "Failed to assign groups and roles to provisioned user",
-			log.MaskedString(log.LoggerKeyUserID, createdEntity.ID),
-			log.Error(err))
-		execResp.Status = providers.ExecFailure
-		execResp.Error = &ErrProvisioningAssignmentFailed
-		return execResp, nil
+	if err := p.assignAndAuthenticateUser(ctx, createdEntity.ID, execResp); err != nil {
+		return nil, err
 	}
-
-	p.authenticateProvisionedUser(ctx, createdEntity.ID, execResp)
 	if execResp.Status == providers.ExecFailure {
 		return execResp, nil
 	}
@@ -734,12 +727,33 @@ func (p *provisioningExecutor) getUserType(ctx *providers.NodeContext) string {
 	return userType
 }
 
+// assignAndAuthenticateUser assigns the groups and roles to the provisioned user, then authenticates it.
+// A client failure is recorded on execResp. A server failure is returned as an error.
+func (p *provisioningExecutor) assignAndAuthenticateUser(ctx *providers.NodeContext, userID string,
+	execResp *providers.ExecutorResponse) error {
+	logger := p.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
+	if svcErr := p.assignGroupsAndRoles(ctx, userID); svcErr != nil {
+		if svcErr.Type == tidcommon.ServerErrorType {
+			return fmt.Errorf("failed to assign groups and roles: %s", svcErr.Error.DefaultValue)
+		}
+		logger.Warn(ctx.Context, "Failed to assign groups and roles to provisioned user",
+			log.MaskedString(log.LoggerKeyUserID, userID),
+			log.String("error", svcErr.Error.DefaultValue))
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrProvisioningAssignmentFailed
+		return nil
+	}
+
+	p.authenticateProvisionedUser(ctx, userID, execResp)
+	return nil
+}
+
 // assignGroupsAndRoles assigns the newly created user to configured groups and roles.
 // If no group or role is configured, the assignments are skipped.
 func (p *provisioningExecutor) assignGroupsAndRoles(
 	ctx *providers.NodeContext,
 	userID string,
-) error {
+) *tidcommon.ServiceError {
 	logger := p.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 
 	groupIDs := p.getGroupsToAssign(ctx)
@@ -768,14 +782,14 @@ func (p *provisioningExecutor) assignGroupsAndRoles(
 	if len(groupIDs) > 0 {
 		if svcErr := p.groupService.AddMembersToGroups(
 			ctx.Context, []group.Member{{ID: userID, Type: group.MemberTypeUser}}, groupIDs); svcErr != nil {
-			return fmt.Errorf("group assignment failed: %s", svcErr.Error.DefaultValue)
+			return svcErr
 		}
 	}
 
 	if len(roleIDs) > 0 {
 		if svcErr := p.roleAssignmentService.AddAssigneesToRoles(
 			ctx.Context, []role.RoleAssignment{{ID: userID, Type: role.AssigneeTypeUser}}, roleIDs); svcErr != nil {
-			return fmt.Errorf("role assignment failed: %s", svcErr.Error.DefaultValue)
+			return svcErr
 		}
 	}
 
@@ -784,14 +798,14 @@ func (p *provisioningExecutor) assignGroupsAndRoles(
 	if len(mappedGroupIDs) > 0 {
 		if svcErr := p.groupService.AddEntityToGroups(
 			ctx.Context, userID, providers.EntityCategoryUser, mappedGroupIDs); svcErr != nil {
-			return fmt.Errorf("mapped group assignment failed: %s", svcErr.Error.DefaultValue)
+			return svcErr
 		}
 	}
 
 	if len(mappedRoleIDs) > 0 {
 		if svcErr := p.roleAssignmentService.AddEntityToRoles(
 			ctx.Context, userID, providers.EntityCategoryUser, mappedRoleIDs); svcErr != nil {
-			return fmt.Errorf("mapped role assignment failed: %s", svcErr.Error.DefaultValue)
+			return svcErr
 		}
 	}
 

@@ -1486,7 +1486,7 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_MappedTargetsSkipStrictA
 	suite.mockRoleAssignmentService.AssertExpectations(suite.T())
 }
 
-// A failure writing mapped groups, other than a missing group, still fails provisioning.
+// A server failure writing mapped groups, other than a missing group, is returned as an error.
 func (suite *ProvisioningExecutorTestSuite) TestExecute_MappedGroupWriteFails() {
 	ctx := suite.newMappedOnlyProvisioningContext()
 	suite.mockGroupService.On("AddEntityToGroups", mock.Anything, testNewUserID, providers.EntityCategoryUser,
@@ -1495,9 +1495,8 @@ func (suite *ProvisioningExecutorTestSuite) TestExecute_MappedGroupWriteFails() 
 
 	resp, err := suite.executor.Execute(ctx)
 
-	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), ErrProvisioningAssignmentFailed.Code, resp.Error.Code)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), resp)
 	suite.mockRoleAssignmentService.AssertNotCalled(suite.T(), "AddEntityToRoles",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
