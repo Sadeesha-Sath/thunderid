@@ -15,6 +15,10 @@
     "dev:b2c": "concurrently \"npm --workspace backend run dev\" \"npm --workspace smtp-server run dev\" \"npm --workspace frontend run dev\" \"npm --workspace lounge run dev\""
   },
   "devDependencies": {
-    "concurrently": "10.0.3"
+    "concurrently": "10.0.6"
+  },
+  "overrides": {
+    "dompurify": "3.4.17",
+    "uuid": "11.1.1"
   }
 }

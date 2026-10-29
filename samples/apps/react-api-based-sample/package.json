@@ -31,9 +31,13 @@
     "vite": "catalog:"
   },
   "overrides": {
-    "postcss": "8.5.18",
+    "postcss": "8.5.23",
     "flatted": ">=3.4.2",
     "picomatch": ">=4.0.4",
-    "yaml": ">=1.10.3"
+    "yaml": ">=1.10.3",
+    "react-router": {
+      "react": "$react",
+      "react-dom": "$react-dom"
+    }
   }
 }
