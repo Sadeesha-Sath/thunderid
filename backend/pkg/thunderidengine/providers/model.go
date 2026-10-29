@@ -780,9 +780,9 @@ type UserTypeAttributeMapping struct {
 }
 
 // AccountLinking configures which attributes resolve the local user for an incoming federated
-// identity when the subject identifier does not. Attributes is a list of external claim names (each
-// resolved to its local counterpart via the IdP's attribute mappings); those with a value are matched
-// together to resolve a unique local user.
+// identity when the subject identifier does not. Attributes is a list of external claim names. Each one
+// matches on every local attribute the IdP's attribute mappings copy it to and on the local attribute
+// of the same name; every attribute with a value must match, and only a unique local user is resolved.
 type AccountLinking struct {
 	Attributes []string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
 }

@@ -692,3 +692,109 @@ func (suite *OAuthUtilsTestSuite) TestValidateNonce() {
 		})
 	}
 }
+
+func (suite *OAuthUtilsTestSuite) TestBuildAccountLinkingFilters() {
+	testCases := []struct {
+		name     string
+		linking  []string
+		claims   map[string]interface{}
+		mappings []providers.AttributeMapping
+		expected []map[string]interface{}
+	}{
+		{
+			name:     "mapped claim matches its target and the same-named attribute",
+			linking:  []string{"email"},
+			claims:   map[string]interface{}{"email": "a@example.com"},
+			mappings: []providers.AttributeMapping{{ExternalAttribute: "email", LocalAttribute: "username"}},
+			expected: []map[string]interface{}{{"username": "a@example.com"}, {"email": "a@example.com"}},
+		},
+		{
+			name:    "explicit same-name mapping is not duplicated",
+			linking: []string{"email"},
+			claims:  map[string]interface{}{"email": "a@example.com"},
+			mappings: []providers.AttributeMapping{
+				{ExternalAttribute: "email", LocalAttribute: "email"},
+				{ExternalAttribute: "email", LocalAttribute: "username"},
+			},
+			expected: []map[string]interface{}{{"email": "a@example.com"}, {"username": "a@example.com"}},
+		},
+		{
+			name:     "unmapped attribute matches its own name",
+			linking:  []string{"email"},
+			claims:   map[string]interface{}{"email": "a@example.com"},
+			expected: []map[string]interface{}{{"email": "a@example.com"}},
+		},
+		{
+			name:    "mapped claim skips a same-named attribute another claim feeds",
+			linking: []string{"email"},
+			claims:  map[string]interface{}{"email": "a@example.com", "mail": "b@example.com"},
+			mappings: []providers.AttributeMapping{
+				{ExternalAttribute: "email", LocalAttribute: "username"},
+				{ExternalAttribute: "mail", LocalAttribute: "email"},
+			},
+			expected: []map[string]interface{}{{"username": "a@example.com"}},
+		},
+		{
+			name:     "unqueryable claim name matches only its mapped target",
+			linking:  []string{"custom:email"},
+			claims:   map[string]interface{}{"custom:email": "a@example.com"},
+			mappings: []providers.AttributeMapping{{ExternalAttribute: "custom:email", LocalAttribute: "email"}},
+			expected: []map[string]interface{}{{"email": "a@example.com"}},
+		},
+		{
+			name:    "earlier attributes vary slowest",
+			linking: []string{"mail", "phone"},
+			claims:  map[string]interface{}{"mail": "a@example.com", "phone": "123"},
+			mappings: []providers.AttributeMapping{
+				{ExternalAttribute: "mail", LocalAttribute: "email"},
+				{ExternalAttribute: "mail", LocalAttribute: "username"},
+				{ExternalAttribute: "phone", LocalAttribute: "mobileNumber"},
+				{ExternalAttribute: "phone", LocalAttribute: "phoneNumber"},
+			},
+			expected: []map[string]interface{}{
+				{"email": "a@example.com", "mobileNumber": "123"},
+				{"email": "a@example.com", "phoneNumber": "123"},
+				{"email": "a@example.com", "phone": "123"},
+				{"username": "a@example.com", "mobileNumber": "123"},
+				{"username": "a@example.com", "phoneNumber": "123"},
+				{"username": "a@example.com", "phone": "123"},
+				{"mail": "a@example.com", "mobileNumber": "123"},
+				{"mail": "a@example.com", "phoneNumber": "123"},
+				{"mail": "a@example.com", "phone": "123"},
+			},
+		},
+		{
+			name:     "attributes landing on one local attribute merge",
+			linking:  []string{"costCenter", "cost_code"},
+			claims:   map[string]interface{}{"cost_code": "CC-1"},
+			mappings: []providers.AttributeMapping{{ExternalAttribute: "cost_code", LocalAttribute: "costCenter"}},
+			expected: []map[string]interface{}{
+				{"costCenter": "CC-1"},
+				{"costCenter": "CC-1", "cost_code": "CC-1"},
+			},
+		},
+		{
+			name:     "attributes without values are left out",
+			linking:  []string{"email", "phone"},
+			claims:   map[string]interface{}{"email": "a@example.com", "phone": ""},
+			expected: []map[string]interface{}{{"email": "a@example.com"}},
+		},
+		{
+			name:    "no valued attribute leaves nothing to match on",
+			linking: []string{"email"},
+			claims:  map[string]interface{}{},
+		},
+		{
+			name:    "a valued attribute with no target disables linking",
+			linking: []string{"email", "custom:tenant"},
+			claims:  map[string]interface{}{"email": "a@example.com", "custom:tenant": "acme"},
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			claims := idp.ApplyAttributeMappings(tc.claims, tc.mappings)
+			suite.Equal(tc.expected, buildAccountLinkingFilters(tc.linking, claims, tc.mappings))
+		})
+	}
+}

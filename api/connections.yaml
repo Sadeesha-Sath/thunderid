@@ -1304,12 +1304,16 @@ components:
       type: object
       description: >
         Configures how an incoming federated identity is resolved to an existing local user when the
-        subject identifier does not resolve one. All configured attributes that have a value are
-        combined into a single lookup filter.
+        subject identifier does not resolve one. Every configured attribute that has a value must match.
       properties:
         attributes:
           type: array
-          description: External attribute names used together to resolve the local user.
+          description: >
+            External attribute names used together to resolve the local user. Each one matches on
+            every local attribute it is mapped to, and on the local attribute of the same name. A name
+            that is not made of letters, digits and underscores matches only through its mappings. If
+            the attributes match more than one user, the match is ambiguous. If an attribute has a value
+            but no local attribute to match on, the attributes match no one.
           items:
             type: string
           example:
