@@ -62,7 +62,7 @@ CREATE TABLE "GROUP_MEMBER_REFERENCE" (
 );
 
 -- Composite index for looking up the groups a member belongs to
-CREATE INDEX idx_group_member_lookup ON "GROUP_MEMBER_REFERENCE" (DEPLOYMENT_ID, MEMBER_TYPE, MEMBER_ID);
+CREATE INDEX idx_group_member_lookup ON "GROUP_MEMBER_REFERENCE" (DEPLOYMENT_ID, MEMBER_ID, MEMBER_TYPE);
 
 -- Table to store indexed entity identifiers for fast lookups (authentication, identification)
 CREATE TABLE "ENTITY_IDENTIFIER" (

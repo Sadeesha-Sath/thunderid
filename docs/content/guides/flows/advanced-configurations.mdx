@@ -1129,7 +1129,7 @@ Creates a new user record in the user store. This executor persists the user's i
 
 **Cross-OU provisioning:** When `allowCrossOUProvisioning` is set and the user exists in a different OU, the executor creates the user in the target OU instead of failing.
 
-**Groups and roles from authorization mapping:** When the identity being provisioned federated in through a connection with [Authorization Mapping](../../identity-providers/add-oidc-provider#authorization-mapping) configured, the groups and roles that mapping resolves are assigned when the account is created, alongside anything named in `assignGroup`/`assignRole`. They're not assigned when the connection's groups and roles sync is session only. The connection's [Sync](../../identity-providers/add-oidc-provider#sync) settings decide whether they're updated on later sign-ins.
+**Groups and roles from authorization mapping:** When the identity being provisioned federated in through a connection with [Authorization Mapping](../../identity-providers/add-oidc-provider#authorization-mapping) configured, the groups and roles that mapping resolves are assigned when the account is created, alongside anything named in `assignGroup`/`assignRole`. They're not assigned when the connection's groups and roles sync is session only. Mapped groups also aren't assigned when groups use the `declarative` [store mode](../../../deployment/configuration#store-modes), and mapped roles aren't when roles do. The connection's [Sync](../../identity-providers/add-oidc-provider#sync) settings decide whether they're updated on later sign-ins.
 
 **Executor properties:**
 
