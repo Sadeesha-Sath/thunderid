@@ -102,11 +102,12 @@ func (p *provisioningExecutor) Execute(ctx *providers.NodeContext) (*providers.E
 		AuthUser:       ctx.AuthUser,
 	}
 
-	// If it's an authentication flow, skip execution if the user is not eligible for provisioning
 	if ctx.FlowType == providers.FlowTypeAuthentication {
-		eligible, ok := ctx.RuntimeData[common.RuntimeKeyUserEligibleForProvisioning]
-		if !ok || eligible != dataValueTrue {
-			logger.Debug(ctx.Context, "User is not eligible for provisioning, skipping execution")
+		skip, err := p.skipsAuthenticationProvisioning(ctx, execResp, logger)
+		if err != nil {
+			return nil, err
+		}
+		if skip {
 			execResp.Status = providers.ExecComplete
 			return execResp, nil
 		}
@@ -208,6 +209,55 @@ func (p *provisioningExecutor) Execute(ctx *providers.NodeContext) (*providers.E
 	}
 
 	return execResp, nil
+}
+
+// skipsAuthenticationProvisioning reports whether an authentication flow skips provisioning: a
+// resolved user needs none unless cross-OU provisioning creates one for them in the target OU, and
+// only a user marked eligible is provisioned. The resolved user is checked before required inputs so
+// the user is not prompted for attributes they already have.
+func (p *provisioningExecutor) skipsAuthenticationProvisioning(ctx *providers.NodeContext,
+	execResp *providers.ExecutorResponse, logger *log.Logger) (bool, error) {
+	if resolvedID := p.GetUserIDFromContext(ctx, execResp, p.authnProvider); resolvedID != "" {
+		outside, err := p.isOutsideCrossOUTarget(ctx, resolvedID)
+		if err != nil {
+			return false, err
+		}
+		if !outside {
+			logger.Debug(ctx.Context, "User already exists, skipping provisioning")
+			return true, nil
+		}
+		logger.Debug(ctx.Context, "Resolved user is outside the target OU, continuing with cross-OU provisioning")
+	}
+
+	if ctx.RuntimeData[common.RuntimeKeyUserEligibleForProvisioning] != dataValueTrue {
+		logger.Debug(ctx.Context, "User is not eligible for provisioning, skipping execution")
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// isOutsideCrossOUTarget reports whether cross-OU provisioning applies to userID: it is allowed, a
+// target OU is set, and the user is in another OU.
+func (p *provisioningExecutor) isOutsideCrossOUTarget(ctx *providers.NodeContext, userID string) (bool, error) {
+	if !isCrossOUProvisioningAllowed(ctx) {
+		return false, nil
+	}
+
+	ref, err := p.getTargetEntityRef(ctx)
+	if err != nil {
+		return false, err
+	}
+	if ref.ouID == "" {
+		return false, nil
+	}
+
+	user, getUserErr := p.entityProvider.GetEntity(userID)
+	if getUserErr != nil {
+		return false, errors.New("failed to retrieve the resolved user")
+	}
+
+	return user.OUID != ref.ouID, nil
 }
 
 // authenticateProvisionedUser authenticates the newly provisioned user and updates the executor response.

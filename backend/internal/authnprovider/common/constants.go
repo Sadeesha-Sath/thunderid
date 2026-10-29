@@ -9,6 +9,9 @@ const (
 	UserAttributeUserID = "userID"
 	// UserAttributeSub is the attribute key used to identify the subject (sub) claim in authentication results.
 	UserAttributeSub = "sub"
+	// AccountLinkingAmbiguousKey marks a federated token whose account-linking attributes match more
+	// than one user, so resolving the token reports an ambiguous user.
+	AccountLinkingAmbiguousKey = "accountLinkingAmbiguous"
 )
 
 // SystemAttrCredentialUpdatedAt is the entity system-attribute key recording when the entity's

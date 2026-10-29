@@ -134,8 +134,13 @@ To resolve an incoming federated identity to an existing local user by attribute
 Behavior:
 
 - Resolution tries the subject identifier (`sub`) first. If it resolves an existing user, that user is used.
-- Otherwise, all configured attributes that have a value are matched together (AND) to resolve a unique local user.
-- Each attribute is an external claim name; if it's mapped under **Attribute Mappings** (for example, `email` to `work_email`), the mapped local attribute is used for the lookup instead.
+- Otherwise, every configured attribute that has a value must match, and only a unique local user is resolved.
+- Each attribute is an external claim name. It matches on every local attribute it's mapped to under **Attribute Mappings**, and on the local attribute of the same name, because mappings copy the value there too. For example, with `email` mapped to `username`, linking on `email` finds a user whose `username` or whose `email` holds the incoming address.
+- Each local attribute is matched on the value it would be provisioned with. An attribute with no mapping of its own therefore also works as a local attribute name: linking on `costCenter` with `cost_centre` mapped to `costCenter` matches on the incoming `cost_centre` value.
+- The same-named local attribute is skipped when its name has characters other than letters, digits, and underscores, which includes dot notation. Such an attribute matches only through its mappings. For example, linking on `address.email` requires a mapping such as `address.email` to `email`.
+- For a mapped attribute, the same-named local attribute is also skipped when another attribute is mapped onto that name, since that attribute's value is what is stored there. For example, with `email` mapped to `contactEmail` and `mail` mapped to `email`, linking on `email` matches on `contactEmail` only.
+- If a configured attribute has a value but nothing to match on, the attributes match no one.
+- If the configured attributes match more than one user, including when two of an attribute's local attributes name different users, the match is treated as ambiguous, the same as when one lookup matches several users.
 - If neither `sub` nor the configured attributes resolve a user, the user is treated as new (subject to the flow's provisioning configuration).
 
 ### Sync

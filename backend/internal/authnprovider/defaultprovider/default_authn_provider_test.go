@@ -584,6 +584,18 @@ func (suite *DefaultAuthnProviderTestSuite) TestGetEntityReference_AmbiguousEnti
 	suite.Equal(authnprovidercm.ErrorCodeAmbiguousUser, err.Code)
 }
 
+func (suite *DefaultAuthnProviderTestSuite) TestGetEntityReference_AmbiguousAccountLinkingToken() {
+	// The token is marked ambiguous by account linking, so it is reported without a lookup.
+	token := map[string]interface{}{authnprovidercm.AccountLinkingAmbiguousKey: true}
+
+	ref, err := suite.provider.GetEntityReference(context.Background(), token)
+
+	suite.Nil(ref)
+	suite.NotNil(err)
+	suite.Equal(authnprovidercm.ErrorCodeAmbiguousUser, err.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything, mock.Anything)
+}
+
 func (suite *DefaultAuthnProviderTestSuite) TestGetEntityReference_IdentifyServerError() {
 	token := map[string]interface{}{"email": "user1@example.com"}
 
