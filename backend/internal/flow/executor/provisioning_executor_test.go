@@ -125,7 +125,163 @@ func (suite *ProvisioningExecutorTestSuite) createMockProvisioningExecutor() pro
 		}).Maybe()
 	mockExec.On("GetInputs", mock.Anything).Return([]providers.Input{}).Maybe()
 	mockExec.On(methodGetRequiredInputs, mock.Anything).Return([]providers.Input{}).Maybe()
+	mockExec.On("GetUserIDFromContext", mock.Anything, mock.Anything, mock.Anything).Return(
+		func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse,
+			authnProvider providers.AuthnProviderManager) string {
+			if userID := ctx.RuntimeData[userAttributeUserID]; userID != "" {
+				return userID
+			}
+			if !ctx.AuthUser.IsAuthenticated() {
+				return ""
+			}
+			authUser, entityRef, svcErr := authnProvider.GetEntityReference(ctx.Context, ctx.AuthUser)
+			execResp.AuthUser = authUser
+			if svcErr != nil || entityRef == nil {
+				return ""
+			}
+			return entityRef.EntityID
+		}).Maybe()
 	return mockExec
+}
+
+// A federated sign-in that account linking resolved to an existing user is not provisioned, even
+// when the provider's claims would not identify that user.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Authentication_ResolvedUserSkipsProvisioning() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAuthentication,
+		RuntimeData: map[string]string{
+			userAttributeUserID:                          "existing-user-id",
+			common.RuntimeKeyUserEligibleForProvisioning: dataValueTrue,
+			attributeEmail:                               "a@example.com",
+			"sub":                                        "federated-sub",
+		},
+	}
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Nil(suite.T(), resp.Error)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "CreateEntity", mock.Anything, mock.Anything)
+}
+
+// A federated sign-in that account linking resolved reaches provisioning through the AuthUser's
+// entity reference, with no user ID in runtime data.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Authentication_ResolvedEntityReferenceSkipsProvisioning() {
+	ctx := &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAuthentication,
+		AuthUser:    newAuthenticatedAuthUser(),
+		RuntimeData: map[string]string{
+			common.RuntimeKeyUserEligibleForProvisioning: dataValueTrue,
+			attributeEmail: "a@example.com",
+			"sub":          "federated-sub",
+		},
+	}
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(newAuthenticatedAuthUser(), &providers.EntityReference{EntityID: testExistingUserID},
+			(*tidcommon.ServiceError)(nil))
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Nil(suite.T(), resp.Error)
+	assert.True(suite.T(), resp.AuthUser.IsAuthenticated())
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "CreateEntity", mock.Anything, mock.Anything)
+}
+
+// newResolvedCrossOUAuthnContext returns a sign-in resolved to testExistingUserID, eligible for
+// provisioning into testOUID, with cross-OU provisioning set to crossOU.
+func newResolvedCrossOUAuthnContext(crossOU bool) *providers.NodeContext {
+	return &providers.NodeContext{
+		ExecutionID: "flow-123",
+		FlowType:    providers.FlowTypeAuthentication,
+		RuntimeData: map[string]string{
+			userAttributeUserID: testExistingUserID,
+			ouIDKey:             testOUID,
+			userTypeKey:         testUserType,
+			common.RuntimeKeyUserEligibleForProvisioning: dataValueTrue,
+			attributeEmail: "a@example.com",
+		},
+		NodeProperties: map[string]interface{}{
+			common.NodePropertyAllowCrossOUProvisioning: crossOU,
+		},
+	}
+}
+
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Authentication_ResolvedUserInTargetOU_SkipsProvisioning() {
+	suite.mockEntityProvider.On("GetEntity", testExistingUserID).
+		Return(&providers.Entity{ID: testExistingUserID, OUID: testOUID}, nil)
+
+	resp, err := suite.executor.Execute(newResolvedCrossOUAuthnContext(true))
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Nil(suite.T(), resp.Error)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "IdentifyEntity", mock.Anything)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "CreateEntity", mock.Anything, mock.Anything)
+}
+
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Authentication_ResolvedUserOutsideTargetOU_NoCrossOU_Skips() {
+	resp, err := suite.executor.Execute(newResolvedCrossOUAuthnContext(false))
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Nil(suite.T(), resp.Error)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "GetEntity", mock.Anything)
+	suite.mockEntityProvider.AssertNotCalled(suite.T(), "CreateEntity", mock.Anything, mock.Anything)
+}
+
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Authentication_ResolvedUserOutsideTargetOU_Provisions() {
+	suite.expectSchemaForProvisioning()
+	attrs := map[string]interface{}{attributeEmail: "a@example.com"}
+	suite.mockEntityProvider.On("GetEntity", testExistingUserID).
+		Return(&providers.Entity{ID: testExistingUserID, OUID: "ou-source"}, nil)
+	suite.mockEntityProvider.On("IdentifyEntity", attrs).
+		Return(nil, entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "not found", ""))
+	suite.mockEntityProvider.On("CreateEntity", mock.MatchedBy(func(u *providers.Entity) bool {
+		return u.OUID == testOUID
+	}), mock.Anything).Return(&providers.Entity{ID: testNewUserID, Type: testUserType, OUID: testOUID}, nil)
+
+	resp, err := suite.executor.Execute(newResolvedCrossOUAuthnContext(true))
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.Nil(suite.T(), resp.Error)
+	assert.Equal(suite.T(), dataValueTrue, resp.RuntimeData[common.RuntimeKeyUserAutoProvisioned])
+}
+
+// Uniqueness spans OUs, so a unique attribute the resolved user holds fails cross-OU provisioning.
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Authentication_CrossOUConflict_Fails() {
+	suite.expectSchemaForProvisioning()
+	attrs := map[string]interface{}{attributeEmail: "a@example.com"}
+	suite.mockEntityProvider.On("GetEntity", testExistingUserID).
+		Return(&providers.Entity{ID: testExistingUserID, OUID: "ou-source"}, nil)
+	suite.mockEntityProvider.On("IdentifyEntity", attrs).
+		Return(nil, entityprovider.NewEntityProviderError(entityprovider.ErrorCodeEntityNotFound, "not found", ""))
+	suite.mockEntityProvider.On("CreateEntity", mock.Anything, mock.Anything).
+		Return(nil, entityprovider.NewEntityProviderError(
+			entityprovider.ErrorCodeAttributeConflict, "Attribute conflict", ""))
+
+	resp, err := suite.executor.Execute(newResolvedCrossOUAuthnContext(true))
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrProvisioningAttributeConflict.Code, resp.Error.Code)
+}
+
+func (suite *ProvisioningExecutorTestSuite) TestExecute_Authentication_ResolvedUserLookupError() {
+	suite.mockEntityProvider.On("GetEntity", testExistingUserID).
+		Return(nil, entityprovider.NewEntityProviderError(entityprovider.ErrorCodeSystemError, "db down", ""))
+
+	resp, err := suite.executor.Execute(newResolvedCrossOUAuthnContext(true))
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), resp)
 }
 
 func (suite *ProvisioningExecutorTestSuite) TestExecute_NonRegistrationFlow() {

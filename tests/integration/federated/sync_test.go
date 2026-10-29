@@ -124,6 +124,19 @@ func (s *FederatedMappingSuite) TestOverrideReceivedUsesTheAccountsUserTypeMappi
 
 // An account matched by an account-linking attribute is synced like any other returning user.
 func (s *FederatedMappingSuite) TestOverrideReceivedSyncsUserMatchedByAccountLinking() {
+	s.assertLinkedUserSignsInAndSyncs(s.strictAuthAppID)
+}
+
+// A flow that provisions an unmatched identity signs the linked account in rather than creating a
+// duplicate, even though the provider's sub matches nobody.
+func (s *FederatedMappingSuite) TestProvisioningFlowSignsInUserMatchedByAccountLinking() {
+	s.assertLinkedUserSignsInAndSyncs(s.authAppID)
+}
+
+// assertLinkedUserSignsInAndSyncs signs an identity in through appID that only its email links to an
+// existing account, and checks that the assertion is for that account and its attributes are synced.
+func (s *FederatedMappingSuite) assertLinkedUserSignsInAndSyncs(appID string) {
+	s.T().Helper()
 	user := s.baseUser(s.nextSubject())
 	userID, err := testutils.CreateUser(testutils.User{
 		Type: fedPersonType.Name,
@@ -141,9 +154,12 @@ func (s *FederatedMappingSuite) TestOverrideReceivedSyncsUserMatchedByAccountLin
 	config := syncAttributeConfig("override_received")
 	config.AccountLinking = &testutils.AccountLinking{Attributes: []string{"email"}}
 
-	step, err := s.authenticate(s.strictAuthAppID, config, user)
+	step, err := s.authenticate(appID, config, user)
 	s.Require().NoError(err, "the linked identity should sign in")
 	s.Require().Equal("COMPLETE", step.FlowStatus, "the linked identity should sign in, got %+v", step)
+	claims, err := testutils.DecodeJWT(step.Assertion)
+	s.Require().NoError(err, "failed to decode the assertion")
+	s.Equal(userID, claims.Sub, "the assertion should be issued for the linked user")
 
 	stored, err := testutils.FindUserByAttribute("email", user.Email)
 	s.Require().NoError(err, "failed to read the linked user")
