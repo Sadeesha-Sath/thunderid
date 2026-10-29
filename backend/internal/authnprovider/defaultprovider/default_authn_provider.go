@@ -283,7 +283,7 @@ func (p *defaultAuthnProvider) buildAuthnResult(
 		entityID, _ = idVal.(string)
 	}
 	if entityID == "" {
-		identifiedEntityID, identifyErr := p.entitySvc.IdentifyEntity(ctx, authnResult.Token)
+		identifiedEntityID, identifyErr := p.identifyEntity(ctx, authnResult.Token)
 		if identifyErr != nil {
 			if errors.Is(identifyErr, entity.ErrEntityNotFound) || errors.Is(identifyErr, entity.ErrAmbiguousEntity) {
 				// Entity does not yet exist at provider. Return the entity reference token and attribute token
@@ -320,6 +320,15 @@ func (p *defaultAuthnProvider) buildAuthnResult(
 	return result, nil
 }
 
+// identifyEntity identifies the entity a token names. A federated token that marks its
+// account-linking attributes as matching several users is ambiguous without a lookup.
+func (p *defaultAuthnProvider) identifyEntity(ctx context.Context, token map[string]interface{}) (*string, error) {
+	if ambiguous, _ := token[authnprovidercm.AccountLinkingAmbiguousKey].(bool); ambiguous {
+		return nil, entity.ErrAmbiguousEntity
+	}
+	return p.entitySvc.IdentifyEntity(ctx, token)
+}
+
 // resolveEntityFromToken resolves the entity for a caller-supplied token (entity
 // reference token or attribute token). Failure to uniquely identify the entity is
 // reported as a client error since the caller controls the token contents.
@@ -333,7 +342,7 @@ func (p *defaultAuthnProvider) resolveEntityFromToken(
 		entityID, _ = idVal.(string)
 	}
 	if entityID == "" {
-		identifiedEntityID, identifyErr := p.entitySvc.IdentifyEntity(ctx, token)
+		identifiedEntityID, identifyErr := p.identifyEntity(ctx, token)
 		if identifyErr != nil {
 			if errors.Is(identifyErr, entity.ErrEntityNotFound) {
 				return nil, newClientError(authnprovidercm.ErrorCodeUserNotFound,

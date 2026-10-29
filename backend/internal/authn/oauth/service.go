@@ -12,6 +12,7 @@ import (
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/thunder-id/thunderid/internal/authn/common"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/idp"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
@@ -385,7 +386,8 @@ func (s *oAuthAuthnService) BuildFederatedAuthResult(ctx context.Context, idpID,
 
 // buildAccountLinkingFilter resolves the local-user lookup filter for the federated identity: without
 // account linking configured it returns the subject filter unchanged; otherwise it tries the subject
-// first, then the configured account-linking attributes, falling back to the subject filter.
+// first, then the configured account-linking attributes, falling back to the subject filter. When the
+// attributes combine into several filters, they are resolved here and must all agree on one user.
 func (s *oAuthAuthnService) buildAccountLinkingFilter(ctx context.Context, idpDTO *providers.IDPDTO,
 	sub string, mappedClaims map[string]interface{}, mappings []providers.AttributeMapping) (
 	map[string]interface{}, *tidcommon.ServiceError) {
@@ -394,55 +396,62 @@ func (s *oAuthAuthnService) buildAccountLinkingFilter(ctx context.Context, idpDT
 		return subFilter, nil
 	}
 
-	resolved, ok, svcErr := s.resolveFilter(ctx, subFilter)
+	userID, _, svcErr := s.resolveFilter(ctx, subFilter)
 	if svcErr != nil {
 		return nil, svcErr
 	}
-	if ok {
-		return resolved, nil
+	if userID != "" {
+		return map[string]interface{}{common.UserAttributeUserID: userID}, nil
 	}
 
-	externalToLocal := make(map[string]string)
-	for _, m := range mappings {
-		externalToLocal[m.ExternalAttribute] = m.LocalAttribute
+	filters := buildAccountLinkingFilters(idpDTO.AttributeConfiguration.AccountLinking.Attributes,
+		mappedClaims, mappings)
+	switch len(filters) {
+	case 0:
+		return subFilter, nil
+	case 1:
+		return filters[0], nil
 	}
 
-	linkFilter := make(map[string]interface{})
-	for _, attr := range idpDTO.AttributeConfiguration.AccountLinking.Attributes {
-		local := attr
-		if mapped, ok := externalToLocal[attr]; ok {
-			local = mapped
+	for _, filter := range filters {
+		entityID, ambiguous, svcErr := s.resolveFilter(ctx, filter)
+		if svcErr != nil {
+			return nil, svcErr
 		}
-		if value := sysutils.ConvertInterfaceValueToString(mappedClaims[local]); value != "" {
-			linkFilter[local] = value
+		if ambiguous || (entityID != "" && userID != "" && entityID != userID) {
+			return map[string]interface{}{authnprovidercm.AccountLinkingAmbiguousKey: true}, nil
+		}
+		if entityID != "" {
+			userID = entityID
 		}
 	}
-	if len(linkFilter) > 0 {
-		return linkFilter, nil
+	if userID == "" {
+		return filters[0], nil
 	}
-
-	return subFilter, nil
+	return map[string]interface{}{common.UserAttributeUserID: userID}, nil
 }
 
-// resolveFilter looks up the filter and, on a unique match, returns a userID token so the caller need
-// not repeat the lookup. "Not found" and "ambiguous" report ok=false with no error so the caller can
-// try the next candidate filter; any other (server) error is surfaced.
+// resolveFilter looks up the filter and returns the ID of the one user it matches. "Not found" returns
+// an empty ID and "ambiguous" sets ambiguous, both with no error so the caller can try another filter;
+// any other (server) error is surfaced.
 func (s *oAuthAuthnService) resolveFilter(ctx context.Context, filter map[string]interface{}) (
-	map[string]interface{}, bool, *tidcommon.ServiceError) {
+	string, bool, *tidcommon.ServiceError) {
 	entityID, epErr := s.entityProvider.IdentifyEntity(filter)
 	if epErr != nil {
-		if epErr.Code == entityprovider.ErrorCodeEntityNotFound ||
-			epErr.Code == entityprovider.ErrorCodeAmbiguousEntity {
-			return nil, false, nil
+		switch epErr.Code {
+		case entityprovider.ErrorCodeEntityNotFound:
+			return "", false, nil
+		case entityprovider.ErrorCodeAmbiguousEntity:
+			return "", true, nil
 		}
 		s.logger.Error(ctx, "Error while identifying user for account linking",
 			log.String("errorCode", string(epErr.Code)), log.String("description", epErr.Description))
-		return nil, false, &tidcommon.InternalServerError
+		return "", false, &tidcommon.InternalServerError
 	}
 	if entityID == nil {
-		return nil, false, nil
+		return "", false, nil
 	}
-	return map[string]interface{}{common.UserAttributeUserID: *entityID}, true, nil
+	return *entityID, false, nil
 }
 
 // getIDP loads the identity provider, wrapping IDP-retrieval errors in the authn domain so the IDP

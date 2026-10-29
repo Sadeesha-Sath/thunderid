@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/authn/common"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
@@ -1128,8 +1129,8 @@ func (suite *OAuthAuthnServiceTestSuite) TestBuildFederatedAuthResultCombinesLin
 }
 
 func (suite *OAuthAuthnServiceTestSuite) TestBuildFederatedAuthResultResolvesExternalToLocalAttribute() {
-	// The account-linking attribute is an external name mapped to a different local attribute; both the
-	// mapped claim and the lookup key must be the local attribute.
+	// The account-linking attribute is an external name mapped to a different local attribute; the
+	// mapped claim lands in the local attribute, and the lookup tries it before the same-named one.
 	idpDTO := createTestIDPDTO()
 	idpDTO.AttributeConfiguration = &providers.AttributeConfiguration{
 		UserTypeResolution: &providers.UserTypeResolution{Default: "Person"},
@@ -1143,6 +1144,10 @@ func (suite *OAuthAuthnServiceTestSuite) TestBuildFederatedAuthResultResolvesExt
 	suite.mockIDPService.On("GetIdentityProvider", mock.Anything, testIDPID).Return(idpDTO, nil)
 	suite.mockEntityProvider.On("IdentifyEntity",
 		map[string]interface{}{"sub": testSub}).Return(nil, errEntityNotFound)
+	suite.mockEntityProvider.On("IdentifyEntity",
+		map[string]interface{}{"family_name": "sadil@example.com"}).Return(nil, errEntityNotFound)
+	suite.mockEntityProvider.On("IdentifyEntity",
+		map[string]interface{}{"email": "sadil@example.com"}).Return(nil, errEntityNotFound)
 
 	result, svcErr := suite.service.BuildFederatedAuthResult(
 		context.Background(), testIDPID, testSub, map[string]interface{}{"email": "sadil@example.com"})
@@ -1150,6 +1155,185 @@ func (suite *OAuthAuthnServiceTestSuite) TestBuildFederatedAuthResultResolvesExt
 	suite.Equal("sadil@example.com", result.AuthenticatedClaims["family_name"])
 	suite.Equal("sadil@example.com", result.Token["family_name"])
 	suite.NotContains(result.Token, "sub")
+}
+
+func (suite *OAuthAuthnServiceTestSuite) TestBuildFederatedAuthResultResolvesSeveralLinkingFilters() {
+	// Linking attributes that match on several local attributes combine into several filters. They are
+	// all resolved, and only one user matched by every filter that finds one is linked.
+	type lookup struct {
+		filter map[string]interface{}
+		userID string
+		err    *entityprovider.EntityProviderError
+	}
+	ambiguousErr := &entityprovider.EntityProviderError{Code: entityprovider.ErrorCodeAmbiguousEntity}
+	serverErr := &entityprovider.EntityProviderError{Code: entityprovider.ErrorCodeSystemError}
+	mailToEmail := providers.AttributeMapping{ExternalAttribute: "mail", LocalAttribute: "email"}
+	mailToUsername := providers.AttributeMapping{ExternalAttribute: "mail", LocalAttribute: "username"}
+	ambiguousToken := map[string]interface{}{authnprovidercm.AccountLinkingAmbiguousKey: true}
+	userToken := map[string]interface{}{common.UserAttributeUserID: testUserID}
+
+	testCases := []struct {
+		name          string
+		mappings      []providers.AttributeMapping
+		linking       []string
+		claims        map[string]interface{}
+		lookups       []lookup
+		expectedToken map[string]interface{}
+		expectedErr   string
+	}{
+		{
+			name: "claim feeding its own name and another attribute links on both",
+			mappings: []providers.AttributeMapping{
+				{ExternalAttribute: "email", LocalAttribute: "username"},
+				{ExternalAttribute: "email", LocalAttribute: "email"},
+			},
+			linking: []string{"email"},
+			claims:  map[string]interface{}{"email": "a@abc.com"},
+			lookups: []lookup{
+				{filter: map[string]interface{}{"username": "a@abc.com"}, err: errEntityNotFound},
+				{filter: map[string]interface{}{"email": "a@abc.com"}, userID: testUserID},
+			},
+			expectedToken: userToken,
+		},
+		{
+			name:     "filters matching different users are ambiguous",
+			mappings: []providers.AttributeMapping{mailToEmail, mailToUsername},
+			linking:  []string{"mail"},
+			claims:   map[string]interface{}{"mail": "a@abc.com"},
+			lookups: []lookup{
+				{filter: map[string]interface{}{"email": "a@abc.com"}, userID: testUserID},
+				{filter: map[string]interface{}{"username": "a@abc.com"}, userID: "other-user"},
+			},
+			expectedToken: ambiguousToken,
+		},
+		{
+			name:     "filters matching different users are ambiguous in reverse mapping order",
+			mappings: []providers.AttributeMapping{mailToUsername, mailToEmail},
+			linking:  []string{"mail"},
+			claims:   map[string]interface{}{"mail": "a@abc.com"},
+			lookups: []lookup{
+				{filter: map[string]interface{}{"username": "a@abc.com"}, userID: "other-user"},
+				{filter: map[string]interface{}{"email": "a@abc.com"}, userID: testUserID},
+			},
+			expectedToken: ambiguousToken,
+		},
+		{
+			name:     "filters matching the same user link it",
+			mappings: []providers.AttributeMapping{mailToEmail, mailToUsername},
+			linking:  []string{"mail"},
+			claims:   map[string]interface{}{"mail": "a@abc.com"},
+			lookups: []lookup{
+				{filter: map[string]interface{}{"email": "a@abc.com"}, userID: testUserID},
+				{filter: map[string]interface{}{"username": "a@abc.com"}, userID: testUserID},
+				{filter: map[string]interface{}{"mail": "a@abc.com"}, err: errEntityNotFound},
+			},
+			expectedToken: userToken,
+		},
+		{
+			name:     "an ambiguous filter makes the match ambiguous",
+			mappings: []providers.AttributeMapping{mailToEmail, mailToUsername},
+			linking:  []string{"mail"},
+			claims:   map[string]interface{}{"mail": "a@abc.com"},
+			lookups: []lookup{
+				{filter: map[string]interface{}{"email": "a@abc.com"}, err: ambiguousErr},
+			},
+			expectedToken: ambiguousToken,
+		},
+		{
+			name:     "no filter matching returns the first for the caller to report",
+			mappings: []providers.AttributeMapping{mailToEmail, mailToUsername},
+			linking:  []string{"mail"},
+			claims:   map[string]interface{}{"mail": "a@abc.com"},
+			lookups: []lookup{
+				{filter: map[string]interface{}{"email": "a@abc.com"}, err: errEntityNotFound},
+				{filter: map[string]interface{}{"username": "a@abc.com"}, err: errEntityNotFound},
+				{filter: map[string]interface{}{"mail": "a@abc.com"}, err: errEntityNotFound},
+			},
+			expectedToken: map[string]interface{}{"email": "a@abc.com"},
+		},
+		{
+			name:     "a server error on a filter is surfaced",
+			mappings: []providers.AttributeMapping{mailToEmail, mailToUsername},
+			linking:  []string{"mail"},
+			claims:   map[string]interface{}{"mail": "a@abc.com"},
+			lookups: []lookup{
+				{filter: map[string]interface{}{"email": "a@abc.com"}, err: serverErr},
+			},
+			expectedErr: tidcommon.InternalServerError.Code,
+		},
+		{
+			name: "one of two linking attributes fanning out combines with the other",
+			mappings: []providers.AttributeMapping{
+				{ExternalAttribute: "mail", LocalAttribute: "email"},
+				{ExternalAttribute: "mail", LocalAttribute: "username"},
+				{ExternalAttribute: "phone", LocalAttribute: "mobileNumber"},
+			},
+			linking: []string{"phone", "mail"},
+			claims:  map[string]interface{}{"mail": "a@abc.com", "phone": "0771234567"},
+			lookups: []lookup{
+				{filter: map[string]interface{}{"mobileNumber": "0771234567", "email": "a@abc.com"},
+					err: errEntityNotFound},
+				{filter: map[string]interface{}{"mobileNumber": "0771234567", "username": "a@abc.com"},
+					userID: testUserID},
+				{filter: map[string]interface{}{"mobileNumber": "0771234567", "mail": "a@abc.com"},
+					err: errEntityNotFound},
+				{filter: map[string]interface{}{"phone": "0771234567", "email": "a@abc.com"},
+					err: errEntityNotFound},
+				{filter: map[string]interface{}{"phone": "0771234567", "username": "a@abc.com"},
+					err: errEntityNotFound},
+				{filter: map[string]interface{}{"phone": "0771234567", "mail": "a@abc.com"},
+					err: errEntityNotFound},
+			},
+			expectedToken: userToken,
+		},
+		{
+			name: "a name fed by another claim links only on its own mappings",
+			mappings: []providers.AttributeMapping{
+				{ExternalAttribute: "mail", LocalAttribute: "email"},
+				{ExternalAttribute: "email", LocalAttribute: "username"},
+			},
+			linking:       []string{"email"},
+			claims:        map[string]interface{}{"mail": "a@abc.com", "email": "b@abc.com"},
+			expectedToken: map[string]interface{}{"username": "b@abc.com"},
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			suite.SetupTest()
+			idpDTO := createTestIDPDTO()
+			idpDTO.AttributeConfiguration = &providers.AttributeConfiguration{
+				UserTypeResolution: &providers.UserTypeResolution{Default: "Person"},
+				UserTypeAttributeMappings: []providers.UserTypeAttributeMapping{
+					{UserType: "Person", Attributes: tc.mappings},
+				},
+				AccountLinking: &providers.AccountLinking{Attributes: tc.linking},
+			}
+			suite.mockIDPService.On("GetIdentityProvider", mock.Anything, testIDPID).Return(idpDTO, nil)
+			suite.mockEntityProvider.On("IdentifyEntity",
+				map[string]interface{}{"sub": testSub}).Return(nil, errEntityNotFound).Once()
+			for _, l := range tc.lookups {
+				if l.err != nil {
+					suite.mockEntityProvider.On("IdentifyEntity", l.filter).Return(nil, l.err).Once()
+					continue
+				}
+				userID := l.userID
+				suite.mockEntityProvider.On("IdentifyEntity", l.filter).Return(&userID, nil).Once()
+			}
+
+			result, svcErr := suite.service.BuildFederatedAuthResult(
+				context.Background(), testIDPID, testSub, tc.claims)
+			if tc.expectedErr != "" {
+				suite.Nil(result)
+				suite.Require().NotNil(svcErr)
+				suite.Equal(tc.expectedErr, svcErr.Code)
+				return
+			}
+			suite.Nil(svcErr)
+			suite.Equal(tc.expectedToken, result.Token)
+			suite.mockEntityProvider.AssertExpectations(suite.T())
+		})
+	}
 }
 
 func (suite *OAuthAuthnServiceTestSuite) TestBuildFederatedAuthResultAmbiguousSubFallsBackToSubWhenNoAttributeValue() {

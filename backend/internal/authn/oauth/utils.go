@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
@@ -249,4 +251,80 @@ func GetStringUserClaimValue(userInfo map[string]interface{}, claim string) stri
 		}
 	}
 	return ""
+}
+
+// buildAccountLinkingFilters returns one filter per combination of the local attributes each linking
+// attribute matches on, earlier attributes varying slowest, or nil when there is nothing to match on.
+// claims are the mapped claims. An attribute with a value and no local attribute yields nil, since
+// dropping it would widen the match.
+func buildAccountLinkingFilters(attrs []string, claims map[string]interface{},
+	mappings []providers.AttributeMapping) []map[string]interface{} {
+	filters := []map[string]interface{}{{}}
+	for _, attr := range attrs {
+		targets := accountLinkingTargets(attr, claims, mappings)
+		if len(targets) == 0 {
+			if value, _ := sysutils.GetNestedValue(claims, attr); sysutils.ConvertInterfaceValueToString(value) != "" {
+				return nil
+			}
+			continue
+		}
+
+		// Every value is read from the one claims map, so two linking attributes that land on the
+		// same local attribute always agree on it, and a filter that already holds it is kept as is.
+		combined := make([]map[string]interface{}, 0, len(filters)*len(targets))
+		for _, filter := range filters {
+			kept := false
+			for _, target := range targets {
+				if _, ok := filter[target]; ok {
+					if !kept {
+						combined = append(combined, filter)
+						kept = true
+					}
+					continue
+				}
+				next := maps.Clone(filter)
+				next[target] = sysutils.ConvertInterfaceValueToString(claims[target])
+				combined = append(combined, next)
+			}
+		}
+		filters = combined
+	}
+
+	if len(filters[0]) == 0 {
+		return nil
+	}
+	return filters
+}
+
+// accountLinkingTargets returns the valued local attributes a linking attribute may match on: its
+// mapped targets in order, then the same-named attribute when queryable and not fed by another claim.
+func accountLinkingTargets(attr string, claims map[string]interface{},
+	mappings []providers.AttributeMapping) []string {
+	targets := make([]string, 0, len(mappings)+1)
+	mapped, shadowed := false, false
+	for _, m := range mappings {
+		switch {
+		case m.ExternalAttribute == attr:
+			mapped = true
+			if !slices.Contains(targets, m.LocalAttribute) &&
+				sysutils.ConvertInterfaceValueToString(claims[m.LocalAttribute]) != "" {
+				targets = append(targets, m.LocalAttribute)
+			}
+		case m.LocalAttribute == attr:
+			shadowed = true
+		}
+	}
+
+	if (!mapped || !shadowed) && isPlainAttributeName(attr) && !slices.Contains(targets, attr) &&
+		sysutils.ConvertInterfaceValueToString(claims[attr]) != "" {
+		targets = append(targets, attr)
+	}
+	return targets
+}
+
+// isPlainAttributeName reports whether name is a plain attribute name a lookup filter can carry.
+func isPlainAttributeName(name string) bool {
+	return name != "" && strings.IndexFunc(name, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_'
+	}) == -1
 }
