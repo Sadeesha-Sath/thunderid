@@ -288,6 +288,9 @@ const (
 	// RuntimeKeyPendingFederatedSync holds the JSON-encoded sync for a returning federated user that
 	// is resolved later in the flow.
 	RuntimeKeyPendingFederatedSync = "pending_federated_sync"
+	// RuntimeKeySyncedAttributes holds the JSON-encoded attributes that a federated login's sync wrote
+	// to the returning user's account, read when building tokens.
+	RuntimeKeySyncedAttributes = "synced_attributes"
 )
 
 // SSOCheckpointKey scopes a per-checkpoint SSO control key (RuntimeKeySSOSessionPresent,

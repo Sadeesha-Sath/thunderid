@@ -1524,20 +1524,31 @@ func (_c *EntityServiceInterfaceMock_SetRoleMembershipProvider_Call) RunAndRetur
 }
 
 // SyncFederatedEntity provides a mock function for the type EntityServiceInterfaceMock
-func (_mock *EntityServiceInterfaceMock) SyncFederatedEntity(ctx context.Context, entityID string, sync providers.FederatedEntitySync) error {
+func (_mock *EntityServiceInterfaceMock) SyncFederatedEntity(ctx context.Context, entityID string, sync providers.FederatedEntitySync) (map[string]interface{}, error) {
 	ret := _mock.Called(ctx, entityID, sync)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SyncFederatedEntity")
 	}
 
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, providers.FederatedEntitySync) error); ok {
+	var r0 map[string]interface{}
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, providers.FederatedEntitySync) (map[string]interface{}, error)); ok {
+		return returnFunc(ctx, entityID, sync)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, providers.FederatedEntitySync) map[string]interface{}); ok {
 		r0 = returnFunc(ctx, entityID, sync)
 	} else {
-		r0 = ret.Error(0)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]interface{})
+		}
 	}
-	return r0
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, providers.FederatedEntitySync) error); ok {
+		r1 = returnFunc(ctx, entityID, sync)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
 }
 
 // EntityServiceInterfaceMock_SyncFederatedEntity_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SyncFederatedEntity'
@@ -1576,12 +1587,12 @@ func (_c *EntityServiceInterfaceMock_SyncFederatedEntity_Call) Run(run func(ctx 
 	return _c
 }
 
-func (_c *EntityServiceInterfaceMock_SyncFederatedEntity_Call) Return(err error) *EntityServiceInterfaceMock_SyncFederatedEntity_Call {
-	_c.Call.Return(err)
+func (_c *EntityServiceInterfaceMock_SyncFederatedEntity_Call) Return(stringToIfaceVal map[string]interface{}, err error) *EntityServiceInterfaceMock_SyncFederatedEntity_Call {
+	_c.Call.Return(stringToIfaceVal, err)
 	return _c
 }
 
-func (_c *EntityServiceInterfaceMock_SyncFederatedEntity_Call) RunAndReturn(run func(ctx context.Context, entityID string, sync providers.FederatedEntitySync) error) *EntityServiceInterfaceMock_SyncFederatedEntity_Call {
+func (_c *EntityServiceInterfaceMock_SyncFederatedEntity_Call) RunAndReturn(run func(ctx context.Context, entityID string, sync providers.FederatedEntitySync) (map[string]interface{}, error)) *EntityServiceInterfaceMock_SyncFederatedEntity_Call {
 	_c.Call.Return(run)
 	return _c
 }

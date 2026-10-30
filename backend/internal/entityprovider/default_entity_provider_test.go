@@ -335,12 +335,16 @@ func (suite *DefaultEntityProviderTestSuite) TestUpdateSystemCredentials() {
 
 func (suite *DefaultEntityProviderTestSuite) TestSyncFederatedEntity() {
 	sync := providers.FederatedEntitySync{Groups: &providers.MembershipSync{IDs: []string{"g1"}}}
-	suite.mockService.On("SyncFederatedEntity", mock.Anything, testEntityID, sync).Return(nil).Once()
-	suite.Nil(suite.provider.SyncFederatedEntity(testEntityID, sync))
+	written := map[string]interface{}{"email": "new@example.com"}
+	suite.mockService.On("SyncFederatedEntity", mock.Anything, testEntityID, sync).Return(written, nil).Once()
+	got, err := suite.provider.SyncFederatedEntity(testEntityID, sync)
+	suite.Nil(err)
+	suite.Equal(written, got)
 
 	suite.mockService.On("SyncFederatedEntity", mock.Anything, testEntityID, sync).
-		Return(entity.ErrSyncRejected).Once()
-	err := suite.provider.SyncFederatedEntity(testEntityID, sync)
+		Return(nil, entity.ErrSyncRejected).Once()
+	got, err = suite.provider.SyncFederatedEntity(testEntityID, sync)
+	suite.Nil(got)
 	suite.NotNil(err)
 	suite.Equal(ErrorCodeSyncRejected, err.Code)
 }

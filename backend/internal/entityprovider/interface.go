@@ -47,8 +47,10 @@ type EntityProviderInterface interface {
 	UpdateSystemCredentials(entityID string,
 		credentials json.RawMessage) *EntityProviderError
 
-	// SyncFederatedEntity writes what a federated sign-in syncs to a returning entity.
-	SyncFederatedEntity(entityID string, sync providers.FederatedEntitySync) *EntityProviderError
+	// SyncFederatedEntity writes what a federated sign-in syncs to a returning entity, and returns the
+	// attributes written.
+	SyncFederatedEntity(
+		entityID string, sync providers.FederatedEntitySync) (map[string]interface{}, *EntityProviderError)
 
 	// GetTransitiveEntityGroups retrieves all groups an entity belongs to, including inherited groups.
 	GetTransitiveEntityGroups(entityID string) ([]providers.EntityGroup, *EntityProviderError)

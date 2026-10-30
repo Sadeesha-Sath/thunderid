@@ -46,13 +46,26 @@ func (s *FederatedMappingSuite) signInAndReadAttributes(
 	step, err := s.authenticate(s.strictAuthAppID, config, user)
 	s.Require().NoError(err, "the returning identity should sign in")
 	s.Require().Equal("COMPLETE", step.FlowStatus, "the returning identity should sign in, got %+v", step)
+	return s.storedAttributes(user.Sub)
+}
 
-	stored, err := testutils.FindUserByAttribute("sub", user.Sub)
+// storedAttributes returns the stored attributes of the account whose subject is sub.
+func (s *FederatedMappingSuite) storedAttributes(sub string) map[string]interface{} {
+	s.T().Helper()
+	stored, err := testutils.FindUserByAttribute("sub", sub)
 	s.Require().NoError(err, "failed to look up the returning user")
 	s.Require().NotNil(stored, "the returning user should exist")
 	var attributes map[string]interface{}
 	s.Require().NoError(json.Unmarshal(stored.Attributes, &attributes))
 	return attributes
+}
+
+// idTokenClaims returns the claims the ID token carries besides the registered ones.
+func (s *FederatedMappingSuite) idTokenClaims(tokens *testutils.TokenResponse) map[string]interface{} {
+	s.T().Helper()
+	claims, err := testutils.DecodeJWT(tokens.IDToken)
+	s.Require().NoError(err, "failed to decode the ID token")
+	return claims.Additional
 }
 
 func syncAttributeConfig(mode string) *testutils.AttributeConfiguration {
@@ -63,16 +76,20 @@ func syncAttributeConfig(mode string) *testutils.AttributeConfiguration {
 }
 
 // With override received, a claim the attribute mappings don't name is not written, even when it
-// shares a local attribute's name.
+// shares a local attribute's name, and the ID token carries the stored value rather than the claim.
 func (s *FederatedMappingSuite) TestOverrideReceivedSkipsUnmappedAttributes() {
 	user := s.baseUser(s.nextSubject())
 	user.Custom["city"] = "Kandy"
 	s.createSyncUser(user)
 
-	attributes := s.signInAndReadAttributes(syncAttributeConfig("override_received"), user)
+	tokens := s.obtainFederatedTokens(syncAttributeConfig("override_received"), user, "openid profile")
 
+	attributes := s.storedAttributes(user.Sub)
 	s.Equal("Colombo", attributes["city"])
 	s.Equal(user.GivenName, attributes["firstName"])
+	idClaims := s.idTokenClaims(tokens)
+	s.Equal("Colombo", idClaims["city"], "the ID token should carry the stored unmapped attribute")
+	s.Equal(user.GivenName, idClaims["firstName"], "the ID token should carry the synced attribute")
 }
 
 // With override received, the attributes the provider sends replace the stored ones, and the rest are kept.
@@ -88,15 +105,34 @@ func (s *FederatedMappingSuite) TestOverrideReceivedAttributesKeepsUnsentAttribu
 	}, attributes)
 }
 
-// With no sync, a returning sign-in leaves the stored attributes alone.
-func (s *FederatedMappingSuite) TestNoSyncAttributesLeavesStoredAttributes() {
+// With override received, an empty value the provider sends is not written, and the ID token carries
+// the stored value rather than the empty one.
+func (s *FederatedMappingSuite) TestOverrideReceivedSkipsEmptyAttributes() {
 	user := s.baseUser(s.nextSubject())
+	user.Custom["given_name"] = ""
 	s.createSyncUser(user)
 
-	attributes := s.signInAndReadAttributes(syncAttributeConfig("no_sync"), user)
+	tokens := s.obtainFederatedTokens(syncAttributeConfig("override_received"), user, "openid profile")
 
+	s.Equal("Old", s.storedAttributes(user.Sub)["firstName"])
+	s.Equal("Old", s.idTokenClaims(tokens)["firstName"], "the ID token should carry the stored attribute")
+}
+
+// With no sync, a returning sign-in leaves the stored attributes alone, and the ID token carries them
+// rather than the provider's values.
+func (s *FederatedMappingSuite) TestNoSyncAttributesLeavesStoredAttributes() {
+	user := s.baseUser(s.nextSubject())
+	user.Custom["city"] = "Kandy"
+	s.createSyncUser(user)
+
+	tokens := s.obtainFederatedTokens(syncAttributeConfig("no_sync"), user, "openid profile")
+
+	attributes := s.storedAttributes(user.Sub)
 	s.Equal("Old", attributes["firstName"])
 	s.Equal("Colombo", attributes["city"])
+	idClaims := s.idTokenClaims(tokens)
+	s.Equal("Old", idClaims["firstName"], "the ID token should carry the stored attribute")
+	s.Equal("Colombo", idClaims["city"], "the ID token should carry the stored attribute")
 }
 
 // With override received, the account is synced with its own user type's mapping, even when the claims
@@ -634,9 +670,9 @@ func (s *FederatedMappingSuite) obtainFederatedTokens(
 			"responseTypes":           []string{"code"},
 			"tokenEndpointAuthMethod": "client_secret_basic",
 			"token": map[string]interface{}{
-				"idToken": map[string]interface{}{"userAttributes": []string{"firstName"}},
+				"idToken": map[string]interface{}{"userAttributes": []string{"firstName", "city"}},
 			},
-			"scopeClaims": map[string][]string{"profile": {"firstName"}},
+			"scopeClaims": map[string][]string{"profile": {"firstName", "city"}},
 		},
 	})
 	s.applyConfig(config)

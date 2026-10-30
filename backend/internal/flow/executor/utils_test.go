@@ -849,7 +849,7 @@ func runFederatedSignInSyncCase(
 	if tc.wantSync {
 		entities.On("SyncFederatedEntity", "local-user-123", providers.FederatedEntitySync{
 			AttributesByType: map[string]map[string]interface{}{"Person": {"email": "new@example.com"}},
-		}).Return(tc.syncErr).Once()
+		}).Return(nil, tc.syncErr).Once()
 	}
 	ctx := &providers.NodeContext{
 		Context:        context.Background(),
