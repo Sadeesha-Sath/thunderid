@@ -447,6 +447,8 @@ func (a *authAssertExecutor) resolveUserAttributes(
 	attributes := make(map[string]interface{})
 
 	standardClaims := oauth2const.GetStandardClaims()
+	// Under no_sync the account's stored attributes take precedence over the provider's values.
+	storedFirst := ctx.RuntimeData[common.RuntimeKeyAttributesSyncMode] == string(providers.SyncModeNoSync)
 
 	for _, attr := range requestedAttributes {
 		// Skip attributes that are handled separately
@@ -462,6 +464,13 @@ func (a *authAssertExecutor) resolveUserAttributes(
 		// Skip standard JWT claims if present in the user attributes
 		if slices.Contains(standardClaims, attr) {
 			continue
+		}
+
+		if storedFirst {
+			if val, ok := fetchedAttributes[attr]; ok {
+				attributes[attr] = val
+				continue
+			}
 		}
 
 		// Check runtime data
