@@ -158,7 +158,8 @@ func syncFederatedUser(
 		return true, nil
 	}
 
-	if epErr := entityProvider.SyncFederatedEntity(userID, sync.Entity); epErr != nil {
+	written, epErr := entityProvider.SyncFederatedEntity(userID, sync.Entity)
+	if epErr != nil {
 		if epErr.Code == entityprovider.ErrorCodeNotImplemented {
 			logger.Debug(ctx.Context, "Entity provider does not support federated sync, skipping",
 				log.MaskedString(log.LoggerKeyUserID, userID))
@@ -171,6 +172,15 @@ func syncFederatedUser(
 		execResp.Status = providers.ExecFailure
 		execResp.Error = &ErrFederatedUserSyncFailed
 		return false, nil
+	}
+
+	// The token reads attributes loaded before this write, so it takes the written values from here.
+	if len(written) > 0 {
+		encoded, err := json.Marshal(written)
+		if err != nil {
+			return false, fmt.Errorf("failed to encode the synced attributes: %w", err)
+		}
+		execResp.RuntimeData[common.RuntimeKeySyncedAttributes] = string(encoded)
 	}
 
 	if logger.IsDebugEnabled() {

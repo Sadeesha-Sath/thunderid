@@ -82,7 +82,8 @@ type EntityServiceInterface interface {
 	LoadIndexedAttributes(attributes []string) error
 
 	// Federated sync
-	SyncFederatedEntity(ctx context.Context, entityID string, sync providers.FederatedEntitySync) error
+	SyncFederatedEntity(
+		ctx context.Context, entityID string, sync providers.FederatedEntitySync) (map[string]interface{}, error)
 
 	// Membership provider registration
 	SetGroupMembershipProvider(provider GroupMembershipProvider)
@@ -490,18 +491,19 @@ func (s *entityService) GetTransitiveGroupAncestors(
 // SyncFederatedEntity writes what a federated sign-in syncs to a returning entity in one transaction.
 // Only the entity's own user type's attributes that differ from the stored ones are written, and a
 // read-only (declarative) entity's attributes are left unchanged. Roles live in another database, so
-// their transaction runs nested inside this one and commits first.
+// their transaction runs nested inside this one and commits first. Returns the attributes written.
 func (s *entityService) SyncFederatedEntity(
 	ctx context.Context, entityID string, sync providers.FederatedEntitySync,
-) error {
-	return s.transactioner.Transact(ctx, func(txCtx context.Context) error {
+) (map[string]interface{}, error) {
+	var written map[string]interface{}
+	err := s.transactioner.Transact(ctx, func(txCtx context.Context) error {
 		existing, err := s.store.GetEntity(txCtx, entityID)
 		if err != nil {
 			return err
 		}
 
 		if attributes := sync.AttributesByType[existing.Type]; len(attributes) > 0 && !existing.IsReadOnly {
-			if err := s.syncAttributes(txCtx, &existing, attributes); err != nil {
+			if written, err = s.syncAttributes(txCtx, &existing, attributes); err != nil {
 				return err
 			}
 		}
@@ -530,31 +532,36 @@ func (s *entityService) SyncFederatedEntity(
 
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	return written, nil
 }
 
 // syncAttributes merges the received values of the entity type's non-credential attributes into the
-// stored attributes, when any of them differ.
+// stored attributes, when any of them differ, and returns the values written.
 func (s *entityService) syncAttributes(
 	ctx context.Context, existing *providers.Entity, received map[string]interface{},
-) error {
+) (map[string]interface{}, error) {
 	if !usesEntityType(existing.Category) || s.entityTypeService == nil {
-		return nil
+		return nil, nil
 	}
 
 	schemaAttrs, svcErr := s.entityTypeService.GetAttributes(ctx, entitytype.TypeCategory(existing.Category),
 		existing.Type, entitytype.AttributeFilter{AllowNonCredential: true})
 	if svcErr != nil {
-		return fmt.Errorf("failed to get schema attributes: %s", svcErr.ErrorDescription.DefaultValue)
+		return nil, fmt.Errorf("failed to get schema attributes: %s", svcErr.ErrorDescription.DefaultValue)
 	}
 
 	current := make(map[string]interface{})
 	if len(existing.Attributes) > 0 {
 		if err := json.Unmarshal(existing.Attributes, &current); err != nil {
-			return fmt.Errorf("failed to read entity attributes: %w", err)
+			return nil, fmt.Errorf("failed to read entity attributes: %w", err)
 		}
 	}
 
-	changed := false
+	written := make(map[string]interface{})
 	for _, a := range schemaAttrs {
 		value := syncValue(received[a.Attribute], a.Type)
 		if value == nil || jsonEqual(value, current[a.Attribute]) {
@@ -562,19 +569,23 @@ func (s *entityService) syncAttributes(
 		}
 
 		current[a.Attribute] = value
-		changed = true
+		written[a.Attribute] = value
 	}
 
-	if !changed {
-		return nil
+	if len(written) == 0 {
+		return nil, nil
 	}
 
 	encoded, err := json.Marshal(current)
 	if err != nil {
-		return fmt.Errorf("failed to encode entity attributes: %w", err)
+		return nil, fmt.Errorf("failed to encode entity attributes: %w", err)
 	}
 
-	return s.UpdateAttributes(ctx, existing.ID, encoded)
+	if err := s.UpdateAttributes(ctx, existing.ID, encoded); err != nil {
+		return nil, err
+	}
+
+	return written, nil
 }
 
 // syncWriteError wraps a group or role write failure, marking client errors with ErrSyncRejected.
