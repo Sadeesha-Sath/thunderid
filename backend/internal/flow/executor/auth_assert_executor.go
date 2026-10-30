@@ -5,6 +5,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -447,6 +448,17 @@ func (a *authAssertExecutor) resolveUserAttributes(
 	attributes := make(map[string]interface{})
 
 	standardClaims := oauth2const.GetStandardClaims()
+	// Under no_sync and override_received the account's attributes take precedence over the provider's
+	// values, since sync writes only mapped attributes and runtime data holds every claim. The fetched
+	// attributes were loaded before the sync, so the values it wrote come first.
+	syncMode := providers.SyncMode(ctx.RuntimeData[common.RuntimeKeyAttributesSyncMode])
+	storedFirst := syncMode == providers.SyncModeNoSync || syncMode == providers.SyncModeOverrideReceived
+	var synced map[string]interface{}
+	if encoded := ctx.RuntimeData[common.RuntimeKeySyncedAttributes]; encoded != "" {
+		if err := json.Unmarshal([]byte(encoded), &synced); err != nil {
+			return nil, fmt.Errorf("failed to decode the synced attributes: %w", err)
+		}
+	}
 
 	for _, attr := range requestedAttributes {
 		// Skip attributes that are handled separately
@@ -462,6 +474,17 @@ func (a *authAssertExecutor) resolveUserAttributes(
 		// Skip standard JWT claims if present in the user attributes
 		if slices.Contains(standardClaims, attr) {
 			continue
+		}
+
+		if storedFirst {
+			if val, ok := synced[attr]; ok {
+				attributes[attr] = val
+				continue
+			}
+			if val, ok := fetchedAttributes[attr]; ok {
+				attributes[attr] = val
+				continue
+			}
 		}
 
 		// Check runtime data

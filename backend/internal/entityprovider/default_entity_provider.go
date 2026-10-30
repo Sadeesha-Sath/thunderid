@@ -142,15 +142,17 @@ func (p *defaultEntityProvider) UpdateAttributes(
 	return nil
 }
 
-// SyncFederatedEntity writes what a federated sign-in syncs to a returning entity.
+// SyncFederatedEntity writes what a federated sign-in syncs to a returning entity, and returns the
+// attributes written.
 func (p *defaultEntityProvider) SyncFederatedEntity(
 	entityID string, sync providers.FederatedEntitySync,
-) *EntityProviderError {
+) (map[string]interface{}, *EntityProviderError) {
 	ctx := security.WithRuntimeContext(context.Background())
-	if err := p.entitySvc.SyncFederatedEntity(ctx, entityID, sync); err != nil {
-		return mapEntityError(err)
+	written, err := p.entitySvc.SyncFederatedEntity(ctx, entityID, sync)
+	if err != nil {
+		return nil, mapEntityError(err)
 	}
-	return nil
+	return written, nil
 }
 
 // UpdateSystemAttributes updates system-managed attributes for an entity.

@@ -174,13 +174,15 @@ var syncTestWrite = federatedSync{Entity: providers.FederatedEntitySync{
 }}
 
 func (s *FederatedSyncTestSuite) TestSyncFederatedUser_Writes() {
-	s.entityProvider.On("SyncFederatedEntity", "user-1", syncTestWrite.Entity).Return(nil).Once()
+	s.entityProvider.On("SyncFederatedEntity", "user-1", syncTestWrite.Entity).
+		Return(map[string]interface{}{"email": "new@example.com"}, nil).Once()
 	execResp := syncTestResponse()
 
 	ok, err := syncFederatedUser(syncTestContext(), execResp, s.entityProvider, "user-1", syncTestWrite, s.logger)
 	s.True(ok)
 	s.NoError(err)
 	s.Empty(execResp.Status)
+	s.JSONEq(`{"email":"new@example.com"}`, execResp.RuntimeData[common.RuntimeKeySyncedAttributes])
 }
 
 func (s *FederatedSyncTestSuite) TestSyncFederatedUser_EmptySyncWritesNothing() {
@@ -199,7 +201,7 @@ func (s *FederatedSyncTestSuite) TestSyncFederatedUser_IncompleteMappingIsAServe
 }
 
 func (s *FederatedSyncTestSuite) TestSyncFederatedUser_RejectedWriteFailsSignIn() {
-	s.entityProvider.On("SyncFederatedEntity", "user-1", mock.Anything).Return(
+	s.entityProvider.On("SyncFederatedEntity", "user-1", mock.Anything).Return(nil,
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeSyncRejected, "Sync rejected", "denied")).Once()
 	execResp := syncTestResponse()
 
@@ -211,7 +213,7 @@ func (s *FederatedSyncTestSuite) TestSyncFederatedUser_RejectedWriteFailsSignIn(
 }
 
 func (s *FederatedSyncTestSuite) TestSyncFederatedUser_SystemErrorIsAServerError() {
-	s.entityProvider.On("SyncFederatedEntity", "user-1", mock.Anything).Return(
+	s.entityProvider.On("SyncFederatedEntity", "user-1", mock.Anything).Return(nil,
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeSystemError, "System error", "db down")).Once()
 	execResp := syncTestResponse()
 
@@ -222,7 +224,7 @@ func (s *FederatedSyncTestSuite) TestSyncFederatedUser_SystemErrorIsAServerError
 }
 
 func (s *FederatedSyncTestSuite) TestSyncFederatedUser_NotImplementedSkipsSync() {
-	s.entityProvider.On("SyncFederatedEntity", "user-1", mock.Anything).Return(
+	s.entityProvider.On("SyncFederatedEntity", "user-1", mock.Anything).Return(nil,
 		entityprovider.NewEntityProviderError(entityprovider.ErrorCodeNotImplemented, "Not implemented", "")).Once()
 	execResp := syncTestResponse()
 
@@ -231,6 +233,7 @@ func (s *FederatedSyncTestSuite) TestSyncFederatedUser_NotImplementedSkipsSync()
 	s.NoError(err)
 	s.Empty(execResp.Status)
 	s.Nil(execResp.Error)
+	s.NotContains(execResp.RuntimeData, common.RuntimeKeySyncedAttributes)
 }
 
 func (s *FederatedSyncTestSuite) TestSyncOrDeferFederatedUser_DefersUntilTheUserIsResolved() {
@@ -242,10 +245,13 @@ func (s *FederatedSyncTestSuite) TestSyncOrDeferFederatedUser_DefersUntilTheUser
 
 	ctx := syncTestContext()
 	ctx.RuntimeData[common.RuntimeKeyPendingFederatedSync] = execResp.RuntimeData[common.RuntimeKeyPendingFederatedSync]
-	s.entityProvider.On("SyncFederatedEntity", "user-2", syncTestWrite.Entity).Return(nil).Once()
-	ok, err = syncPendingFederatedUser(ctx, syncTestResponse(), s.entityProvider, "user-2", s.logger)
+	s.entityProvider.On("SyncFederatedEntity", "user-2", syncTestWrite.Entity).
+		Return(map[string]interface{}{"email": "new@example.com"}, nil).Once()
+	execResp = syncTestResponse()
+	ok, err = syncPendingFederatedUser(ctx, execResp, s.entityProvider, "user-2", s.logger)
 	s.True(ok)
 	s.NoError(err)
+	s.JSONEq(`{"email":"new@example.com"}`, execResp.RuntimeData[common.RuntimeKeySyncedAttributes])
 }
 
 func (s *FederatedSyncTestSuite) TestSyncOrDeferFederatedUser_EmptySyncIsNotKept() {

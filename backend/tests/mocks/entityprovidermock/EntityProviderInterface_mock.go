@@ -697,22 +697,33 @@ func (_c *EntityProviderInterfaceMock_SearchEntities_Call) RunAndReturn(run func
 }
 
 // SyncFederatedEntity provides a mock function for the type EntityProviderInterfaceMock
-func (_mock *EntityProviderInterfaceMock) SyncFederatedEntity(entityID string, sync providers.FederatedEntitySync) *entityprovider.EntityProviderError {
+func (_mock *EntityProviderInterfaceMock) SyncFederatedEntity(entityID string, sync providers.FederatedEntitySync) (map[string]interface{}, *entityprovider.EntityProviderError) {
 	ret := _mock.Called(entityID, sync)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SyncFederatedEntity")
 	}
 
-	var r0 *entityprovider.EntityProviderError
-	if returnFunc, ok := ret.Get(0).(func(string, providers.FederatedEntitySync) *entityprovider.EntityProviderError); ok {
+	var r0 map[string]interface{}
+	var r1 *entityprovider.EntityProviderError
+	if returnFunc, ok := ret.Get(0).(func(string, providers.FederatedEntitySync) (map[string]interface{}, *entityprovider.EntityProviderError)); ok {
+		return returnFunc(entityID, sync)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string, providers.FederatedEntitySync) map[string]interface{}); ok {
 		r0 = returnFunc(entityID, sync)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*entityprovider.EntityProviderError)
+			r0 = ret.Get(0).(map[string]interface{})
 		}
 	}
-	return r0
+	if returnFunc, ok := ret.Get(1).(func(string, providers.FederatedEntitySync) *entityprovider.EntityProviderError); ok {
+		r1 = returnFunc(entityID, sync)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*entityprovider.EntityProviderError)
+		}
+	}
+	return r0, r1
 }
 
 // EntityProviderInterfaceMock_SyncFederatedEntity_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SyncFederatedEntity'
@@ -745,12 +756,12 @@ func (_c *EntityProviderInterfaceMock_SyncFederatedEntity_Call) Run(run func(ent
 	return _c
 }
 
-func (_c *EntityProviderInterfaceMock_SyncFederatedEntity_Call) Return(entityProviderError *entityprovider.EntityProviderError) *EntityProviderInterfaceMock_SyncFederatedEntity_Call {
-	_c.Call.Return(entityProviderError)
+func (_c *EntityProviderInterfaceMock_SyncFederatedEntity_Call) Return(stringToIfaceVal map[string]interface{}, entityProviderError *entityprovider.EntityProviderError) *EntityProviderInterfaceMock_SyncFederatedEntity_Call {
+	_c.Call.Return(stringToIfaceVal, entityProviderError)
 	return _c
 }
 
-func (_c *EntityProviderInterfaceMock_SyncFederatedEntity_Call) RunAndReturn(run func(entityID string, sync providers.FederatedEntitySync) *entityprovider.EntityProviderError) *EntityProviderInterfaceMock_SyncFederatedEntity_Call {
+func (_c *EntityProviderInterfaceMock_SyncFederatedEntity_Call) RunAndReturn(run func(entityID string, sync providers.FederatedEntitySync) (map[string]interface{}, *entityprovider.EntityProviderError)) *EntityProviderInterfaceMock_SyncFederatedEntity_Call {
 	_c.Call.Return(run)
 	return _c
 }

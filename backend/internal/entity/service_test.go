@@ -816,7 +816,7 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_WritesChangedAttributesGroups
 	roles.On("ReplaceEntityRoles", mock.Anything, "u1", providers.EntityCategoryUser, []string{},
 		[]string{"r2"}).Return(nil).Once()
 
-	err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{
+	written, err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{
 		AttributesByType: map[string]map[string]interface{}{
 			"employee": {
 				"email": "new@example.com", "age": "30", "verified": "true", "tags": []interface{}{"a"},
@@ -828,6 +828,9 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_WritesChangedAttributesGroups
 		Roles:  &providers.MembershipSync{IDs: []string{}, RetainIDs: []string{"r2"}},
 	})
 	s.NoError(err)
+	s.Equal(map[string]interface{}{
+		"email": "new@example.com", "verified": true, "tags": []interface{}{"a"},
+	}, written)
 }
 
 func (s *ServiceTestSuite) TestSyncFederatedEntity_UnchangedAttributesWriteNothing() {
@@ -835,12 +838,13 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_UnchangedAttributesWriteNothi
 	s.store.On("GetEntity", mock.Anything, "u1").Return(syncTestUser(`{"email":"same@example.com","age":30}`), nil)
 	s.expectSchema(ets)
 
-	err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{
+	written, err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{
 		AttributesByType: map[string]map[string]interface{}{
 			"employee": {"email": "same@example.com", "age": 30},
 		},
 	})
 	s.NoError(err)
+	s.Nil(written)
 	s.store.AssertNotCalled(s.T(), "UpdateAttributes", mock.Anything, mock.Anything, mock.Anything)
 }
 
@@ -850,7 +854,7 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_OtherUserTypeWritesNothing() 
 	svc, _, _, _ := s.newSyncSvc()
 	s.store.On("GetEntity", mock.Anything, "u1").Return(syncTestUser(`{"email":"old@example.com"}`), nil)
 
-	err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{
+	_, err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{
 		AttributesByType: map[string]map[string]interface{}{"contractor": {"email": "new@example.com"}},
 	})
 	s.NoError(err)
@@ -865,11 +869,12 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_ReadOnlyEntityKeepsAttributes
 	groups.On("ReplaceEntityGroups", mock.Anything, "u1", providers.EntityCategoryUser, []string{"g1"}, []string(nil)).
 		Return(nil).Once()
 
-	err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{
+	written, err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{
 		AttributesByType: map[string]map[string]interface{}{"employee": {"email": "new@example.com"}},
 		Groups:           &providers.MembershipSync{IDs: []string{"g1"}},
 	})
 	s.NoError(err)
+	s.Nil(written)
 }
 
 func (s *ServiceTestSuite) TestSyncFederatedEntity_RejectedWriteIsMarked() {
@@ -880,7 +885,7 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_RejectedWriteIsMarked() {
 	roles.On("ReplaceEntityRoles", mock.Anything, "u1", providers.EntityCategoryUser, []string{"r1"}, []string(nil)).
 		Return(&tidcommon.ErrorUnauthorized).Once()
 
-	err := svc.SyncFederatedEntity(s.ctx, "u1",
+	_, err := svc.SyncFederatedEntity(s.ctx, "u1",
 		providers.FederatedEntitySync{
 			Groups: &providers.MembershipSync{IDs: []string{"g1"}},
 			Roles:  &providers.MembershipSync{IDs: []string{"r1"}},
@@ -894,7 +899,7 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_ServerErrorIsNotMarked() {
 	groups.On("ReplaceEntityGroups", mock.Anything, "u1", providers.EntityCategoryUser, []string{"g1"}, []string(nil)).
 		Return(&tidcommon.InternalServerError).Once()
 
-	err := svc.SyncFederatedEntity(s.ctx, "u1",
+	_, err := svc.SyncFederatedEntity(s.ctx, "u1",
 		providers.FederatedEntitySync{Groups: &providers.MembershipSync{IDs: []string{"g1"}}})
 	s.Error(err)
 	s.NotErrorIs(err, ErrSyncRejected)
@@ -904,7 +909,7 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_EntityNotFound() {
 	svc, _, _, _ := s.newSyncSvc()
 	s.store.On("GetEntity", mock.Anything, "u1").Return(providers.Entity{}, ErrEntityNotFound)
 
-	err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{Groups: &providers.MembershipSync{}})
+	_, err := svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{Groups: &providers.MembershipSync{}})
 	s.ErrorIs(err, ErrEntityNotFound)
 }
 
@@ -914,7 +919,7 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_SchemaLookupFails() {
 	ets.On("GetAttributes", mock.Anything, mock.Anything, "employee",
 		entitytype.AttributeFilter{AllowNonCredential: true}).Return(nil, &tidcommon.InternalServerError)
 
-	err := svc.SyncFederatedEntity(s.ctx, "u1",
+	_, err := svc.SyncFederatedEntity(s.ctx, "u1",
 		providers.FederatedEntitySync{
 			AttributesByType: map[string]map[string]interface{}{"employee": {"email": "a@example.com"}},
 		})
@@ -924,6 +929,8 @@ func (s *ServiceTestSuite) TestSyncFederatedEntity_SchemaLookupFails() {
 func (s *ServiceTestSuite) TestSyncFederatedEntity_NoMembershipProviderRegistered() {
 	s.store.On("GetEntity", mock.Anything, "u1").Return(syncTestUser(`{}`), nil)
 
-	s.Error(s.svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{Groups: &providers.MembershipSync{}}))
-	s.Error(s.svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{Roles: &providers.MembershipSync{}}))
+	_, err := s.svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{Groups: &providers.MembershipSync{}})
+	s.Error(err)
+	_, err = s.svc.SyncFederatedEntity(s.ctx, "u1", providers.FederatedEntitySync{Roles: &providers.MembershipSync{}})
+	s.Error(err)
 }

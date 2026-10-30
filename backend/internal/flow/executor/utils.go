@@ -207,6 +207,7 @@ var reservedAuthorizationRuntimeKeys = map[string]bool{
 	common.RuntimeKeySessionGroupIDs:        true,
 	common.RuntimeKeySessionRoleIDs:         true,
 	common.RuntimeKeyPendingFederatedSync:   true,
+	common.RuntimeKeySyncedAttributes:       true,
 }
 
 // copyFederatedAttributesToRuntimeData copies federatedAttributes into execResp.RuntimeData, skipping
