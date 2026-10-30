@@ -1371,6 +1371,40 @@ func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithUserType
 	assert.Equal(suite.T(), "INTERNAL", attrs[oauth2const.ClaimUserType])
 }
 
+func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_AttributeSyncModes() {
+	tests := []struct {
+		name          string
+		syncMode      providers.SyncMode
+		expectedEmail string
+	}{
+		{"NoSyncPrefersStoredValue", providers.SyncModeNoSync, "stored@example.com"},
+		{"SessionOnlyPrefersProviderValue", providers.SyncModeSessionOnly, "provider@example.com"},
+		{"OverrideReceivedPrefersProviderValue", providers.SyncModeOverrideReceived, "provider@example.com"},
+	}
+
+	for _, tc := range tests {
+		suite.Run(tc.name, func() {
+			ctx := &providers.NodeContext{
+				ExecutionID: "flow-123",
+				Context:     context.Background(),
+				RuntimeData: map[string]string{
+					common.RuntimeKeyAttributesSyncMode: string(tc.syncMode),
+					"email":                             "provider@example.com",
+					"given_name":                        "Provider",
+				},
+			}
+			fetchedAttributes := map[string]interface{}{"email": "stored@example.com"}
+
+			attrs, err := suite.executor.resolveUserAttributes(ctx, []string{"email", "given_name"},
+				fetchedAttributes, "user-123", "", "")
+
+			suite.Require().NoError(err)
+			suite.Equal(tc.expectedEmail, attrs["email"])
+			suite.Equal("Provider", attrs["given_name"])
+		})
+	}
+}
+
 func (suite *AuthAssertExecutorTestSuite) TestResolveUserAttributes_WithEmptyUserType_NotAdded() {
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
