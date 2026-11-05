@@ -208,7 +208,15 @@ func addBlockingTool(server *mcpsdk.Server, name string) *blockingCall {
 func (suite *DefaultGuardTestSuite) serveMCP(server *mcpsdk.Server) *httptest.Server {
 	suite.initRuntime(nil)
 	mux := http.NewServeMux()
-	Initialize(mux, server, func(next http.Handler) http.Handler { return next }, nil)
+	// Stands in for the auth guard with a caller holding root, which every tool call accepts.
+	asRoot := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := security.WithSecurityContextTest(r.Context(), security.NewSecurityContextForTest(
+				"user-1", "", "", []string{security.GetSystemRootPermission()}, nil))
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+	Initialize(mux, server, asRoot, nil)
 	httpServer := httptest.NewServer(mux)
 	suite.T().Cleanup(httpServer.Close)
 	return httpServer

@@ -234,6 +234,17 @@ const (
 	ActionDeleteNotificationTemplate Action = "notificationtemplate:delete"
 	// ActionListNotificationTemplates lists notification templates.
 	ActionListNotificationTemplates Action = "notificationtemplate:list"
+
+	// ActionCreateApplication creates a new application.
+	ActionCreateApplication Action = "app:create"
+	// ActionReadApplication reads an application.
+	ActionReadApplication Action = "app:read"
+	// ActionUpdateApplication updates an application.
+	ActionUpdateApplication Action = "app:update"
+	// ActionDeleteApplication deletes an application.
+	ActionDeleteApplication Action = "app:delete"
+	// ActionListApplications lists applications.
+	ActionListApplications Action = "app:list"
 )
 
 // ---- Permissions ----
@@ -256,6 +267,10 @@ type SystemPermissions struct {
 	AgentTypeView            string
 	NotificationTemplate     string
 	NotificationTemplateView string
+	AppView                  string
+	AppCreate                string
+	AppUpdate                string
+	AppDelete                string
 	// Catalog holds every permission declared under Root, in declaration order: each resource
 	// followed by its actions.
 	Catalog []string
@@ -296,6 +311,10 @@ func InitSystemPermissions(handle string) {
 		AgentTypeView:            buildPermission(handle, "system", "agenttype", "view"),
 		NotificationTemplate:     buildPermission(handle, "system", "notificationtemplate"),
 		NotificationTemplateView: buildPermission(handle, "system", "notificationtemplate", "view"),
+		AppView:                  buildPermission(handle, "system", "app", catalogActionView),
+		AppCreate:                buildPermission(handle, "system", "app", catalogActionCreate),
+		AppUpdate:                buildPermission(handle, "system", "app", catalogActionUpdate),
+		AppDelete:                buildPermission(handle, "system", "app", catalogActionDelete),
 	}
 	for _, entry := range systemCatalog {
 		p.Catalog = append(p.Catalog, buildPermission(handle, "system", string(entry.resource)))
@@ -355,6 +374,13 @@ func InitSystemPermissions(handle string) {
 		ActionUpdateNotificationTemplate: p.NotificationTemplate,
 		ActionDeleteNotificationTemplate: p.NotificationTemplate,
 		ActionListNotificationTemplates:  p.NotificationTemplateView,
+
+		// Application actions.
+		ActionCreateApplication: p.AppCreate,
+		ActionReadApplication:   p.AppView,
+		ActionUpdateApplication: p.AppUpdate,
+		ActionDeleteApplication: p.AppDelete,
+		ActionListApplications:  p.AppView,
 	}
 
 	apiPermissionEntries = []apiPermissionEntry{
@@ -436,6 +462,19 @@ func InitSystemPermissions(handle string) {
 		{"PUT /agent-types/**", p.AgentType},
 		{"DELETE /agent-types/**", p.AgentType},
 
+		// Application APIs. A sharing policy is part of the application it governs, so changing one
+		// updates the application. Sharing policy rules are listed before the "**" rules.
+		{"GET /applications", p.AppView},
+		{"POST /applications", p.AppCreate},
+		{"POST /applications/*/sharing-policies", p.AppUpdate},
+		{"DELETE /applications/*/sharing-policies/**", p.AppUpdate},
+		{"GET /applications/**", p.AppView},
+		{"PUT /applications/**", p.AppUpdate},
+		{"DELETE /applications/**", p.AppDelete},
+		// CIMD preview is a step of creating an application. When another resource uses CIMD, give
+		// each its own route on the shared CIMD service, gated by that resource's create permission.
+		{"POST /cimd/preview", p.AppCreate},
+
 		// Project APIs. Creating a project creates a root organization unit, which is a root
 		// administrator operation, so the whole surface requires root.
 		{"GET /projects", p.Root},
@@ -469,6 +508,16 @@ func InitSystemPermissions(handle string) {
 		// Import APIs.
 		{"POST /import", p.Root},
 		{"POST /import/delete", p.Root},
+	}
+
+	mcpToolPermissions = map[string]string{
+		// Application tools.
+		"list_applications":            p.AppView,
+		"get_application_by_id":        p.AppView,
+		"get_application_by_client_id": p.AppView,
+		"get_application_templates":    p.AppView,
+		"create_application":           p.AppCreate,
+		"update_application":           p.AppUpdate,
 	}
 }
 
@@ -511,6 +560,22 @@ type apiPermissionEntry struct {
 //
 // Rebuilt by InitSystemPermissions at startup.
 var apiPermissionEntries []apiPermissionEntry
+
+// ---- MCP tool → Permission map ----
+
+// mcpToolPermissions maps each MCP tool name to the minimum permission required to call it.
+// Tools not present in this map default to requiring the root system permission.
+// Rebuilt by InitSystemPermissions at startup.
+var mcpToolPermissions map[string]string
+
+// ResolveMCPToolPermission returns the minimum permission required to call the named MCP tool.
+// Falls back to the root system permission for tools not listed in the MCP tool permission map.
+func ResolveMCPToolPermission(toolName string) string {
+	if perm, ok := mcpToolPermissions[toolName]; ok {
+		return perm
+	}
+	return GetSystemRootPermission()
+}
 
 // ---- Helper functions ----
 
