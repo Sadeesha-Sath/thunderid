@@ -38,6 +38,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/cors"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/crypto/cryptomock"
 	"github.com/thunder-id/thunderid/tests/mocks/entitymock"
@@ -47,6 +48,7 @@ import (
 	"github.com/thunder-id/thunderid/tests/mocks/oumock"
 	"github.com/thunder-id/thunderid/tests/mocks/serverconfigmock"
 	"github.com/thunder-id/thunderid/tests/mocks/sharingmock"
+	"github.com/thunder-id/thunderid/tests/mocks/sysauthzmock"
 )
 
 const testServiceAppID = "app123"
@@ -199,8 +201,22 @@ func (suite *ServiceTestSuite) setupTestService() (
 		dependencyRegistry:   noopDepRegistry{},
 		sharingService:       mockSharing,
 		governance:           governance,
+		authzService:         allowAllAuthz(suite.T()),
 	}
 	return service, mockStore
+}
+
+// allowAllAuthz returns an authorization service that allows every action, for tests that do not
+// exercise authorization.
+func allowAllAuthz(t interface {
+	mock.TestingT
+	Cleanup(func())
+}) *sysauthzmock.SystemAuthorizationServiceInterfaceMock {
+	authz := sysauthzmock.NewSystemAuthorizationServiceInterfaceMock(t)
+	authz.EXPECT().IsActionAllowed(mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
+	authz.EXPECT().GetAccessibleResources(mock.Anything, mock.Anything, mock.Anything).Maybe().
+		Return(&sysauthz.AccessibleResources{AllAllowed: true}, nil)
+	return authz
 }
 
 // activeReads answers a governance read with ACTIVE for every entity.

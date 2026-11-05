@@ -2763,8 +2763,8 @@ func (suite *HandlerTestSuite) TestSharingPaginationAnswersAlikeFromEitherSide()
 	}
 }
 
-// The status separates the three kinds of refusal a sharing call produces: a malformed request, a
-// policy that is not there, and a conflict with state the caller has not seen.
+// The status separates the kinds of refusal a sharing call produces: a malformed request, a policy
+// that is not there, a conflict with state the caller has not seen, and a caller without access.
 func (suite *HandlerTestSuite) TestSharingErrorsCarryTheirOwnStatus() {
 	for _, tc := range []struct {
 		name       string
@@ -2778,6 +2778,7 @@ func (suite *HandlerTestSuite) TestSharingErrorsCarryTheirOwnStatus() {
 		{"a declared policy", &ErrorSharingPolicyDeclared, http.StatusBadRequest},
 		{"an unshared organization unit", &ErrorApplicationNotSharedToOU, http.StatusNotFound},
 		{"a framework failure", &tidcommon.InternalServerError, http.StatusInternalServerError},
+		{"a caller outside the application's unit", &tidcommon.ErrorUnauthorized, http.StatusForbidden},
 	} {
 		suite.Run(tc.name, func() {
 			mockService := NewApplicationServiceInterfaceMock(suite.T())

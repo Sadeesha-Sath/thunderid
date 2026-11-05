@@ -23,7 +23,8 @@ func newServer() *mcp.Server {
 }
 
 // toolPermissionMiddleware refuses a tool call unless the caller holds the permission the tool is
-// mapped to, as the route table does for a REST call.
+// mapped to, as the route table does for a REST call. The service the tool calls then applies the
+// organization unit boundary.
 func toolPermissionMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		if call, ok := req.(*mcp.CallToolRequest); ok {

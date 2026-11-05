@@ -19,6 +19,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/design/common"
 	layoutmgt "github.com/thunder-id/thunderid/internal/design/layout/mgt"
 	thememgt "github.com/thunder-id/thunderid/internal/design/theme/mgt"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/tests/mocks/applicationmock"
 	"github.com/thunder-id/thunderid/tests/mocks/design/layoutmock"
 	"github.com/thunder-id/thunderid/tests/mocks/design/thememock"
@@ -88,7 +89,9 @@ func (suite *ResolveServiceTestSuite) TestResolveDesign_NilApplicationService() 
 // configured. The resolve endpoint is unauthenticated, so a distinct error here would let an
 // anonymous caller confirm which application IDs exist.
 func (suite *ResolveServiceTestSuite) TestResolveDesign_UnknownApplicationIsIndistinguishable() {
-	suite.mockAppService.On("GetApplication", mock.Anything, "00000000-0000-0000-0000-000000000099").
+	// The endpoint is unauthenticated, so the application is read as the runtime.
+	suite.mockAppService.On("GetApplication", mock.MatchedBy(security.IsRuntimeContext),
+		"00000000-0000-0000-0000-000000000099").
 		Return(nil, &application.ErrorApplicationNotFound)
 
 	result, err := suite.service.ResolveDesign(context.Background(), providers.DesignResolveTypeAPP,

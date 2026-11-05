@@ -23,6 +23,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/ou"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
 
@@ -106,7 +107,9 @@ func (ds *dcrService) RegisterClient(ctx context.Context, request *DCRRegistrati
 	var createdAppID string
 
 	err := ds.transactioner.Transact(ctx, func(txCtx context.Context) error {
-		createdApp, svcErr := ds.appService.CreateApplication(txCtx, appDTO)
+		// The handler has already authorized the registration, which an open registration endpoint
+		// allows without a token, so the application is created as the runtime.
+		createdApp, svcErr := ds.appService.CreateApplication(security.WithRuntimeContext(txCtx), appDTO)
 		if svcErr != nil {
 			if svcErr.Type == tidcommon.ServerErrorType {
 				logger.Error(ctx, "Failed to create application via Application service",
@@ -161,7 +164,8 @@ func (ds *dcrService) RegisterClient(ctx context.Context, request *DCRRegistrati
 					log.String("appID", createdAppID), log.String("field", field))
 			}
 		}
-		if delSvcErr := ds.appService.DeleteApplication(cleanupCtx, createdAppID); delSvcErr != nil {
+		if delSvcErr := ds.appService.DeleteApplication(
+			security.WithRuntimeContext(cleanupCtx), createdAppID); delSvcErr != nil {
 			logger.Error(ctx,
 				"Compensation delete failed after i18n write failure; app record may be orphaned",
 				log.String("appID", createdAppID))

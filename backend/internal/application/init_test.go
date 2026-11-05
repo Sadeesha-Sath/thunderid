@@ -162,6 +162,7 @@ func (suite *InitTestSuite) TestInitialize_WithDeclarativeResourcesDisabled() {
 		nil, // valueCapturer - not needed for this test
 		nil, // governance - not needed for this test
 		nil, // projectResolver - not needed for this test
+		nil, // authzService - not needed for this test
 	)
 
 	// Assert
@@ -211,6 +212,7 @@ func (suite *InitTestSuite) TestInitialize_WithMCPServer() {
 		nil, // valueCapturer - not needed for this test
 		nil, // governance - not needed for this test
 		nil, // projectResolver - not needed for this test
+		nil, // authzService - not needed for this test
 	)
 
 	// Assert
@@ -644,6 +646,7 @@ func TestInitialize_Standalone(t *testing.T) {
 		nil, // valueCapturer - not needed for this test
 		nil, // governance - not needed for this test
 		nil, // projectResolver - not needed for this test
+		nil, // authzService - not needed for this test
 	)
 
 	// Assert
@@ -701,6 +704,7 @@ func TestInitialize_WithDeclarativeResources_Standalone(t *testing.T) {
 		nil, // valueCapturer - not needed for this test
 		nil, // governance - not needed for this test
 		nil, // projectResolver - not needed for this test
+		nil, // authzService - not needed for this test
 	)
 
 	// Assert
@@ -936,7 +940,7 @@ func (suite *InitTestSuite) TestInitializeReportsAFailureLoadingApplications() {
 	service, _, err := Initialize(
 		http.NewServeMux(), nil, mockEntityService,
 		inboundclientmock.NewInboundClientServiceInterfaceMock(suite.T()),
-		nil, nil, nil, nil, nil, newSharingServiceStub(suite.T()), nil, nil, nil,
+		nil, nil, nil, nil, nil, newSharingServiceStub(suite.T()), nil, nil, nil, nil,
 	)
 
 	assert.ErrorIs(suite.T(), err, assert.AnError)
@@ -959,7 +963,7 @@ func (suite *InitTestSuite) TestInitializeReportsAFailureLoadingSharingPolicies(
 
 	service, _, err := Initialize(
 		http.NewServeMux(), nil, mockEntityService, mockInboundClient,
-		nil, nil, nil, nil, nil, sharingService, nil, nil, nil,
+		nil, nil, nil, nil, nil, sharingService, nil, nil, nil, nil,
 	)
 
 	assert.ErrorIs(suite.T(), err, assert.AnError)

@@ -21,6 +21,7 @@ import (
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/middleware"
+	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
@@ -44,10 +45,11 @@ func Initialize(
 	valueCapturer declarativeresource.ValueCapturer,
 	governance identitygovernance.IdentityGovernanceServiceInterface,
 	projectResolver projectOUResolver,
+	authzService sysauthz.SystemAuthorizationServiceInterface,
 ) (ApplicationServiceInterface, declarativeresource.ResourceExporter, error) {
 	appService := newApplicationService(
 		inboundClient, entityService, ouService, i18nService, cryptoSvc, serverConfigSvc, artifactLifetime,
-		valueCapturer, sharingService, governance, projectResolver,
+		valueCapturer, sharingService, governance, projectResolver, authzService,
 	)
 
 	// Registered before declarative resources load, because loading seeds the sharing policies those

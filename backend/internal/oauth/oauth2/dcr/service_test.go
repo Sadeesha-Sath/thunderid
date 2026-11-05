@@ -18,6 +18,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/cert"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/tests/mocks/applicationmock"
 	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 	i18nmock "github.com/thunder-id/thunderid/tests/mocks/i18n/mgtmock"
@@ -166,8 +167,9 @@ func (s *DCRServiceTestSuite) TestRegisterClient_ClientNameProvided() {
 		},
 	}
 
+	// The handler has authorized the registration, so the application is created as the runtime.
 	s.mockAppService.On(
-		"CreateApplication", mock.Anything, mock.AnythingOfType("*model.ApplicationDTO"),
+		"CreateApplication", mock.MatchedBy(security.IsRuntimeContext), mock.AnythingOfType("*model.ApplicationDTO"),
 	).Return(appDTO, (*tidcommon.ServiceError)(nil))
 
 	response, err := s.service.RegisterClient(context.Background(), request)
