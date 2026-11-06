@@ -460,6 +460,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 			RoleService:            roleService,
 			RoleAssignmentService:  roleAssignmentService,
 			PermissionResolver:     permissionResolver,
+			PermissionAuthorizer:   ouAuthzService,
 			EntityProvider:         entityProvider,
 			UserMgtProvider:        userMgtProvider,
 			AttributeCacheSvc:      attributeCacheService,

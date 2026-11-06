@@ -484,3 +484,18 @@ func (s *SystemAuthzTestSuite) TestSetOUHierarchyResolver_NilResolver_FallsBackT
 	assert.False(s.T(), allowed)
 	assert.Nil(s.T(), svcErr)
 }
+
+func (s *SystemAuthzTestSuite) TestIsPermissionGranted() {
+	ctxWith := func(perms ...string) context.Context {
+		return security.WithSecurityContextTest(context.Background(),
+			security.NewSecurityContextForTest("u1", "ou1", "token", perms, nil))
+	}
+
+	s.True(s.service.IsPermissionGranted(ctxWith("system"), "system:user:create"))
+	s.True(s.service.IsPermissionGranted(ctxWith("system:user"), "system:user:create"))
+	s.True(s.service.IsPermissionGranted(ctxWith("system:user:create"), "system:user:create"))
+	s.True(s.service.IsPermissionGranted(ctxWith(), ""))
+	s.False(s.service.IsPermissionGranted(ctxWith("system:user:view"), "system:user:create"))
+	s.False(s.service.IsPermissionGranted(ctxWith("system:user:create"), "system"))
+	s.False(s.service.IsPermissionGranted(security.WithRuntimeContext(context.Background()), "system:user:create"))
+}
