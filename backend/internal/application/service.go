@@ -32,6 +32,8 @@ import (
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+	"github.com/thunder-id/thunderid/internal/system/security"
+	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -96,6 +98,7 @@ type applicationService struct {
 	inboundClientService inboundclient.InboundClientServiceInterface
 	entityService        entity.EntityServiceInterface
 	ouService            oupkg.OrganizationUnitServiceInterface
+	authzService         sysauthz.SystemAuthorizationServiceInterface
 	i18nService          i18nmgt.I18nServiceInterface
 	cryptoSvc            providers.RuntimeCryptoProvider
 	dependencyRegistry   resourcedependency.Registry
@@ -122,6 +125,7 @@ func newApplicationService(
 	inboundClientSvc inboundclient.InboundClientServiceInterface,
 	entityService entity.EntityServiceInterface,
 	ouService oupkg.OrganizationUnitServiceInterface,
+	authzService sysauthz.SystemAuthorizationServiceInterface,
 	i18nService i18nmgt.I18nServiceInterface,
 	cryptoSvc providers.RuntimeCryptoProvider,
 	serverConfigSvc serverconfig.ServerConfigService,
@@ -136,6 +140,7 @@ func newApplicationService(
 		inboundClientService: inboundClientSvc,
 		entityService:        entityService,
 		ouService:            ouService,
+		authzService:         authzService,
 		i18nService:          i18nService,
 		cryptoSvc:            cryptoSvc,
 		serverConfigService:  serverConfigSvc,
@@ -1001,6 +1006,16 @@ func (as *applicationService) ValidateCredentialAction(
 	*model.ApplicationArtifactProfile, *tidcommon.ServiceError) {
 	if action != model.CredentialActionRegenerate {
 		return nil, &ErrorUnsupportedCredentialAction
+	}
+	allowed, svcErr := as.authzService.IsActionAllowed(ctx, security.ActionUpdateApplication,
+		&sysauthz.ActionContext{ResourceType: security.ResourceTypeApplication, ResourceID: appID})
+	if svcErr != nil {
+		as.logger.Error(ctx, "Failed to check authorization for action",
+			log.String("action", string(security.ActionUpdateApplication)), log.Any("error", svcErr))
+		return nil, &tidcommon.InternalServerError
+	}
+	if !allowed {
+		return nil, &tidcommon.ErrorUnauthorized
 	}
 	existing, svcErr := as.loadApplicationEntity(ctx, appID)
 	if svcErr != nil {

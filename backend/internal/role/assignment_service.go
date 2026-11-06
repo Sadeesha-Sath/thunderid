@@ -25,6 +25,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/filter"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -298,6 +299,9 @@ func (as *roleAssignmentService) ValidateRemoveAssignment(ctx context.Context, i
 
 	if assigneeID == "" {
 		return nil, &ErrorMissingAssigneeID
+	}
+	if svcErr := checkRoleAccess(ctx, as.authzService, logger, security.ActionUpdateRole, id); svcErr != nil {
+		return nil, svcErr
 	}
 	if svcErr := as.authzService.CanGrantMembership(ctx, sysauthz.PrincipalTypeRole, id); svcErr != nil {
 		return nil, svcErr

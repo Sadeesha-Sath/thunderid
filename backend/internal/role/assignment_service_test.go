@@ -1554,7 +1554,13 @@ func (s *RoleAssignmentRemovalValidationTestSuite) SetupTest() {
 		s.store, s.entities, s.groups, nil, s.resources, &fakeTransactioner{}, s.authz, s.sharing)
 }
 
+func (s *RoleAssignmentRemovalValidationTestSuite) mayUpdateRole(roleID string) {
+	s.authz.On("IsActionAllowed", mock.Anything, security.ActionUpdateRole,
+		&sysauthz.ActionContext{ResourceType: security.ResourceTypeRole, ResourceID: roleID}).Return(true, nil)
+}
+
 func (s *RoleAssignmentRemovalValidationTestSuite) mayChangeAssignments() {
+	s.mayUpdateRole(targetRoleID)
 	s.authz.On("CanGrantMembership", mock.Anything, sysauthz.PrincipalTypeRole, targetRoleID).Return(nil)
 }
 
@@ -1748,7 +1754,34 @@ func (s *RoleAssignmentRemovalValidationTestSuite) TestRunsTheRemovalsAssigneeCh
 	s.Equal(ErrorInvalidAssignmentID.Code, svcErr.Code)
 }
 
+func (s *RoleAssignmentRemovalValidationTestSuite) TestRefusesACallerWhoMayNotUpdateTheRole() {
+	for name, check := range map[string]struct {
+		authzErr *tidcommon.ServiceError
+		wantCode string
+	}{
+		"denied":        {wantCode: tidcommon.ErrorUnauthorized.Code},
+		"check failure": {authzErr: &tidcommon.InternalServerError, wantCode: tidcommon.InternalServerError.Code},
+	} {
+		s.Run(name, func() {
+			s.SetupTest()
+			s.authz.On("IsActionAllowed", mock.Anything, security.ActionUpdateRole,
+				&sysauthz.ActionContext{ResourceType: security.ResourceTypeRole, ResourceID: targetRoleID}).
+				Return(false, check.authzErr)
+
+			target, svcErr := s.service.ValidateRemoveAssignment(
+				context.Background(), targetRoleID, "", targetUserID)
+
+			s.Nil(target)
+			s.Require().NotNil(svcErr)
+			s.Equal(check.wantCode, svcErr.Code)
+			s.authz.AssertNotCalled(s.T(), "CanGrantMembership", mock.Anything, mock.Anything, mock.Anything)
+			s.store.AssertNotCalled(s.T(), "GetRole", mock.Anything, mock.Anything)
+		})
+	}
+}
+
 func (s *RoleAssignmentRemovalValidationTestSuite) TestRefusesACallerWhoMayNotChangeAssignments() {
+	s.mayUpdateRole(targetRoleID)
 	s.authz.On("CanGrantMembership", mock.Anything, sysauthz.PrincipalTypeRole, targetRoleID).
 		Return(&tidcommon.ErrorUnauthorized)
 
@@ -1760,6 +1793,7 @@ func (s *RoleAssignmentRemovalValidationTestSuite) TestRefusesACallerWhoMayNotCh
 }
 
 func (s *RoleAssignmentRemovalValidationTestSuite) TestRequiresBothIdentifiers() {
+	s.mayUpdateRole("")
 	s.authz.On("CanGrantMembership", mock.Anything, sysauthz.PrincipalTypeRole, "").Return(nil)
 
 	_, svcErr := s.service.ValidateRemoveAssignment(context.Background(), "", "", targetUserID)
