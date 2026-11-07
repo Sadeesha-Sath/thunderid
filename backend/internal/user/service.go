@@ -1574,7 +1574,7 @@ func (us *userService) checkSharingAccess(
 func (us *userService) checkSharingReadAccess(ctx context.Context, ouIDs ...string) *tidcommon.ServiceError {
 	denied := &tidcommon.ErrorUnauthorized
 	for _, ouID := range ouIDs {
-		svcErr := us.checkSharingAccess(ctx, security.ActionReadUser, ouID)
+		svcErr := us.checkSharingAccess(ctx, security.ActionReadUserSharing, ouID)
 		if svcErr == nil {
 			return nil
 		}
@@ -1632,7 +1632,7 @@ func (us *userService) CreateSharingPolicy(
 	if initiatingOUID == "" {
 		initiatingOUID = owningOUID
 	}
-	if svcErr := us.checkSharingAccess(ctx, security.ActionUpdateUser, initiatingOUID); svcErr != nil {
+	if svcErr := us.checkSharingAccess(ctx, security.ActionCreateUserSharing, initiatingOUID); svcErr != nil {
 		return sharing.Policy{}, svcErr
 	}
 	// Users that load from resource files only have all their sharing declared there.
@@ -1683,7 +1683,7 @@ func (us *userService) ListSharingPolicies(
 	if svcErr != nil {
 		return sharing.PolicyList{}, svcErr
 	}
-	svcErr = us.checkSharingAccess(ctx, security.ActionReadUser, owningOUID)
+	svcErr = us.checkSharingAccess(ctx, security.ActionReadUserSharing, owningOUID)
 	if svcErr == nil {
 		list, svcErr := us.sharingService.GetPolicyList(ctx, UserSharingType, userID, limit, offset)
 		return list, translateSharingError(svcErr)
@@ -1705,7 +1705,7 @@ func (us *userService) listOwnSharingPolicies(
 	}
 	own := make([]sharing.Policy, 0, len(policies))
 	for _, p := range policies {
-		svcErr := us.checkSharingAccess(ctx, security.ActionReadUser, p.InitiatingOUID)
+		svcErr := us.checkSharingAccess(ctx, security.ActionReadUserSharing, p.InitiatingOUID)
 		if svcErr == nil {
 			own = append(own, p)
 			continue
@@ -1737,7 +1737,7 @@ func (us *userService) UpdateSharingPolicy(
 	if svcErr != nil {
 		return sharing.Policy{}, svcErr
 	}
-	if svcErr := us.checkSharingAccess(ctx, security.ActionUpdateUser, policy.InitiatingOUID); svcErr != nil {
+	if svcErr := us.checkSharingAccess(ctx, security.ActionUpdateUserSharing, policy.InitiatingOUID); svcErr != nil {
 		return sharing.Policy{}, svcErr
 	}
 	if isDeclarativeModeEnabled() {
@@ -1757,7 +1757,7 @@ func (us *userService) DeleteSharingPolicy(ctx context.Context, userID, policyID
 		}
 		return svcErr
 	}
-	if svcErr := us.checkSharingAccess(ctx, security.ActionUpdateUser, policy.InitiatingOUID); svcErr != nil {
+	if svcErr := us.checkSharingAccess(ctx, security.ActionDeleteUserSharing, policy.InitiatingOUID); svcErr != nil {
 		return svcErr
 	}
 	if isDeclarativeModeEnabled() {
